@@ -1,0 +1,180 @@
+---
+title: "preprocessing"
+output: html_document
+---
+
+# Loading
+
+Loading usefull packages
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+```
+
+Loading raw data
+
+```{r}
+raw_data <- read.csv("validations-reseau-ferre-profils-horaires-par-jour-type-2eme-trimestre.csv", sep = ";")
+colnames(raw_data)
+```
+
+# Column selection and translation
+
+Selecting appropriate columns and translating them
+
+```{r}
+data <- raw_data %>% mutate(
+  station_id = paste(
+    CODE_STIF_TRNS, 
+    CODE_STIF_RES, 
+    CODE_STIF_ARRET, 
+    sep = "_")
+) %>% select(
+  station_id,
+  ID_ZDC,
+  LIBELLE_ARRET,
+  CAT_JOUR,
+  TRNC_HORR_60,
+  Pourcentage_validations
+) %>% rename(
+  connection_id = ID_ZDC,
+  station_name = LIBELLE_ARRET,
+  day_cat = CAT_JOUR,
+  time_slot = TRNC_HORR_60,
+  percentage_entering = Pourcentage_validations
+)
+
+head(data)
+
+unique(data %>% pull(time_slot))
+```
+
+Transforming time slots into start time points
+
+```{r}
+ts_to_stp <- c(
+  "0H-1H"= 0,
+  "1H-2H"= 1,
+  "2H-3H"= 2,
+  "3H-4H"= 3,
+  "4H-5H"= 4,
+  "5H-6H"= 5,
+  "6H-7H"= 6,
+  "7H-8H"= 7,
+  "8H-9H"= 8,
+  "9H-10H"= 9,
+  "10H-11H"= 10,
+  "11H-12H"= 11,
+  "12H-13H"= 12,
+  "13H-14H"= 13,
+  "14H-15H"= 14,
+  "15H-16H"= 15,
+  "16H-17H"= 16,
+  "17H-18H"= 17,
+  "18H-19H"= 18,
+  "19H-20H"= 19,
+  "20H-21H"= 20,
+  "21H-22H"= 21,
+  "22H-23H"= 22,
+  "23H-0H"= 23
+)
+
+data <- data %>% mutate(
+  time_slot = ts_to_stp[time_slot]
+)
+```
+
+Translate day categories:
+
+- WD: Working day (outside of school holidays periods)
+
+- WDSH: Working day during school holidays
+
+- SA: Saturday (outside of school holidays periods)
+
+- SASH: Saturday during school holidays
+
+- SUPH: Sunday and bank holidays
+
+```{r}
+translate_day_cat <- c(
+  "JOHV" = "WD",
+  "JOVS" = "WDSH",
+  "SAHV" = "SA",
+  "SAVS" = "SASH",
+  "DIJFP" = "SUPH"
+)
+
+data <- data %>% mutate(
+  day_cat = translate_day_cat[day_cat]
+)
+```
+
+# Removing wrong data
+
+## Removing non-defined data
+
+Removing unknown stations
+
+```{r}
+data <- data %>% filter(station_name != "Inconnu")
+```
+
+Checking `connection_id`
+
+```{r}
+any(is.na(data$connection_id))
+```
+
+There are non-defined connections, let's inspect them
+
+```{r}
+data %>% filter(is.na(connection_id))
+```
+
+It is normal since there are no connection zone in the Orly Airport, we will handle it later.
+
+Checking that there is only one `station_name` per `station_id`
+
+```{r}
+data %>% select(station_id, station_name) %>% group_by(station_id) %>% distinct(station_name) %>% count() %>% filter(n != 1)
+```
+
+Checking `day_cat`
+
+```{r}
+unique(data$day_cat)
+```
+
+Checking `time_slot`
+
+```{r}
+data %>% filter(is.na(time_slot))
+```
+
+The corresponding percentage is null, they do not carry information so we discard them
+
+```{r}
+data <- data %>% filter(!is.na(time_slot))
+```
+
+Inspecting `percentage_entering`
+
+```{r}
+data %>% filter(is.na(percentage_entering) | percentage_entering < 0 & percentage_entering > 100)
+```
+
+## Removing inconsistent data 
+
+Checking that all distributions sum up to 100%
+
+```{r}
+ggplot(data %>% group_by(station_id, day_cat) %>% summarise(tot = sum(percentage_entering)), aes(tot)) + geom_bar()
+```
+
+There is some inconsistency (probably associated to number rounding), we correct it.
+
+```{r}
+
+```
