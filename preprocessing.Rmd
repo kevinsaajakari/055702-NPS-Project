@@ -178,3 +178,10 @@ There is some inconsistency (probably associated to number rounding), we correct
 ```{r}
 
 ```
+
+
+## Saving cleaned data for next steps
+
+```{r}
+write.csv(data, "cleaned_data.csv", row.names = FALSE)
+```
