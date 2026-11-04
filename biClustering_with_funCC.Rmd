@@ -91,57 +91,62 @@ The properties of a bicluster will be its mean, the alpha_i and the beta_j funct
 
 
 ```{r}
-compute_bicluster_properties <- function(data) {
+compute_bicluster_properties <- function(data, row_var, col_var, time_var, value_var, n_slots) {
+  
+  I_set = sort(unique(data[[row_var]]))
+  J_set = sort(unique(data[[col_var]]))
 
-  stations = sort(unique(data$station_id))
-  day_types = sort(unique(data$day_cat))
-  card_I <- length(stations)
-  card_J <- length(day_types)
+  card_I = length(I_set)
+  card_J = length(J_set)
+  
+  slots = seq_len(n_slots) -1
 
   agg <- data %>%
-    group_by(station_id, day_cat, time_slot) %>%
-    summarise(v = sum(percentage_entering, na.rm = TRUE), .groups = "drop")
+    group_by(.data[[row_var]], .data[[col_var]], .data[[time_var]]) %>%
+    summarise(v = sum(.data[[value_var]], na.rm = TRUE), .groups = "drop")
 
-  cube <- array(0, dim = c(card_I, card_J, 24),
-                dimnames = list(stations, day_types, 0:23))
+
+  cube = array(0, dim = c(card_I, card_J, n_slots),
+                dimnames = list(I_set, J_set, slots))
 
   for (r in seq_len(nrow(agg))) {
-    i <- match(agg$station_id[r], stations)
-    j <- match(agg$day_cat[r], day_types)
-    t <- agg$time_slot[r] + 1
-    cube[i, j, t] <- agg$v[r]
+    i = match(agg[[row_var]][r], I_set)
+    j = match(agg[[col_var]][r], J_set)
+    t = agg[[time_var]][r] + 1
+    cube[i, j, t] = agg$v[r]
   }
 
-  mu_IJ <- numeric(24)
+  mu_IJ <- numeric(n_slots)
 
-  for (t in 1:24) {
+  for (t in seq_len(n_slots)) {
     for (i in 1:card_I) {
       for (j in 1:card_J) {
-        mu_IJ[t] <- mu_IJ[t] + cube[i, j, t]
+        mu_IJ[t] = mu_IJ[t] + cube[i, j, t]
       }
     }
-    mu_IJ[t] <- mu_IJ[t] / (card_I * card_J)
+    mu_IJ[t] = mu_IJ[t] / (card_I * card_J)
   }
 
-  alpha_IJ <- matrix(0, nrow = card_I, ncol = 24, dimnames = list(stations, 0:23))
+  alpha_IJ = matrix(0, nrow = card_I, ncol = n_slots, dimnames = list(I_set, slots))
 
-  for (t in 1:24) {
+  for (t in seq_len(n_slots)) {
     for (i in 1:card_I) {
       for (j in 1:card_J) {
-        alpha_IJ[i, t] <- alpha_IJ[i, t] + cube[i, j, t]
+        alpha_IJ[i, t] = alpha_IJ[i, t] + cube[i, j, t]
       }
-      alpha_IJ[i, t] <- alpha_IJ[i, t] / card_J - mu_IJ[t]
+      alpha_IJ[i, t] = alpha_IJ[i, t] / card_J - mu_IJ[t]
     }
   }
 
-  beta_IJ <- matrix(0, nrow = card_J, ncol = 24, dimnames = list(day_types, 0:23))
+  beta_IJ <- matrix(0, nrow = card_J, ncol = n_slots, dimnames = list(J_set, slots))
 
-  for (t in 1:24) {
+
+  for (t in seq_len(n_slots)) {
     for (j in 1:card_J) {
       for (i in 1:card_I) {
-        beta_IJ[j, t] <- beta_IJ[j, t] + cube[i, j, t]
+        beta_IJ[j, t] = beta_IJ[j, t] + cube[i, j, t]
       }
-      beta_IJ[j, t] <- beta_IJ[j, t] / card_I - mu_IJ[t]
+      beta_IJ[j, t] = beta_IJ[j, t] / card_I - mu_IJ[t]
     }
   }
 
@@ -153,7 +158,7 @@ compute_bicluster_properties <- function(data) {
 ## Check on global set
 
 ```{r}
-res <- compute_bicluster_properties(data)
+res <- compute_bicluster_properties(data, 'station_id', 'day_cat', 'time_slot', 'percentage_entering', 24)
 
 mu_IJ    <- res$mu_IJ
 alpha_IJ <- res$alpha_IJ
@@ -270,4 +275,20 @@ ggplot(data_SUPH, aes(
     color = "Day category"
   ) +
   theme_minimal()
+```
+
+
+
+## Implement H-score function
+
+
+```{r}
+
+compute_h_score <- function(mu_IJ, alpha_IJ, beta_IJ){
+  card_I = nrow(alpha_IJ)
+  card_J = nrow(beta_IJ)
+  
+  
+}
+
 ```
