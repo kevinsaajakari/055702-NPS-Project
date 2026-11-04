@@ -1,0 +1,273 @@
+---
+title: "biClustering_with_funCC"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+```
+
+# funCC BiClustering
+
+## Importing useful libraries
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+```
+
+### FunCC Installation
+
+```{r}
+#install.packages(c("remotes", "biclust", "reshape", "RColorBrewer", "narray"))
+#remotes::install_github("cran/FunCC")
+```
+
+## Loading data from preprocessing step
+
+```{r}
+data <- read.csv("cleaned_data.csv", sep = ",")
+```
+
+## Visualize the curves, splitted by type of day
+
+```{r}
+unique(data$day_cat)
+```
+- WD: Working day (outside of school holidays periods)
+- WDSH: Working day during school holidays
+- SA: Saturday (outside of school holidays periods)
+- SASH: Saturday during school holidays
+- SUPH: Sunday and bank holidays
+
+```{r}
+plot_curves <- function(data_to_plot) {
+  ggplot(data_to_plot, aes(
+    x = time_slot,
+    y = percentage_entering,
+    group = station_id
+  )) +
+    geom_line(alpha = 0.2) +
+    facet_wrap(~day_cat) +
+    scale_x_continuous(breaks = 0:23) +
+    theme_minimal()
+}
+
+data_WDSH <- data %>%
+  filter(day_cat == 'WDSH')
+data_SA <- data %>%
+  filter(day_cat == 'SA')
+data_SASH <- data %>%
+  filter(day_cat == 'SASH')
+data_SUPH <- data %>%
+  filter(day_cat == 'SUPH')
+data_WD <- data %>%
+  filter(day_cat == 'WD')
+
+plot_curves(data_WD)
+plot_curves(data_WDSH)
+plot_curves(data_SA)
+plot_curves(data_SASH)
+plot_curves(data_SUPH)
+
+```
+
+## Definition of function for computing bicluster properties
+
+See Definition 2.1 in the FunCC paper.
+
+In this implementation, I consider:
+
+- I: set of stations
+- J: set of day types i.e. j \in (WDSH,SA,SASH,SUPH,WD)
+
+each f_ij = f_ij(time_slot).
+
+The properties of a bicluster will be its mean, the alpha_i and the beta_j functional curves.
+
+
+```{r}
+compute_bicluster_properties <- function(data) {
+
+  stations = sort(unique(data$station_id))
+  day_types = sort(unique(data$day_cat))
+  card_I <- length(stations)
+  card_J <- length(day_types)
+
+  agg <- data %>%
+    group_by(station_id, day_cat, time_slot) %>%
+    summarise(v = sum(percentage_entering, na.rm = TRUE), .groups = "drop")
+
+  cube <- array(0, dim = c(card_I, card_J, 24),
+                dimnames = list(stations, day_types, 0:23))
+
+  for (r in seq_len(nrow(agg))) {
+    i <- match(agg$station_id[r], stations)
+    j <- match(agg$day_cat[r], day_types)
+    t <- agg$time_slot[r] + 1
+    cube[i, j, t] <- agg$v[r]
+  }
+
+  mu_IJ <- numeric(24)
+
+  for (t in 1:24) {
+    for (i in 1:card_I) {
+      for (j in 1:card_J) {
+        mu_IJ[t] <- mu_IJ[t] + cube[i, j, t]
+      }
+    }
+    mu_IJ[t] <- mu_IJ[t] / (card_I * card_J)
+  }
+
+  alpha_IJ <- matrix(0, nrow = card_I, ncol = 24, dimnames = list(stations, 0:23))
+
+  for (t in 1:24) {
+    for (i in 1:card_I) {
+      for (j in 1:card_J) {
+        alpha_IJ[i, t] <- alpha_IJ[i, t] + cube[i, j, t]
+      }
+      alpha_IJ[i, t] <- alpha_IJ[i, t] / card_J - mu_IJ[t]
+    }
+  }
+
+  beta_IJ <- matrix(0, nrow = card_J, ncol = 24, dimnames = list(day_types, 0:23))
+
+  for (t in 1:24) {
+    for (j in 1:card_J) {
+      for (i in 1:card_I) {
+        beta_IJ[j, t] <- beta_IJ[j, t] + cube[i, j, t]
+      }
+      beta_IJ[j, t] <- beta_IJ[j, t] / card_I - mu_IJ[t]
+    }
+  }
+
+  return(list(mu_IJ = mu_IJ, alpha_IJ = alpha_IJ, beta_IJ = beta_IJ))
+}
+
+```
+
+## Check on global set
+
+```{r}
+res <- compute_bicluster_properties(data)
+
+mu_IJ    <- res$mu_IJ
+alpha_IJ <- res$alpha_IJ
+beta_IJ  <- res$beta_IJ
+```
+
+### Global mean mu
+
+```{r}
+ggplot(data, aes(
+  x = time_slot,
+  y = percentage_entering,
+  group = station_id
+)) +
+  geom_line(alpha = 0.2) +
+  geom_line(
+    data = data.frame(
+      time_slot = 0:23,
+      mu_IJ = mu_IJ
+    ),
+    aes(x = time_slot, y = mu_IJ),
+    color = "red",
+    linewidth = 1.2,
+    inherit.aes = FALSE
+  ) +
+  scale_x_continuous(breaks = 0:23) +
+  theme_minimal()
+
+```
+
+### alpha: Station effect
+
+```{r}
+alpha_df <- as.data.frame(alpha_IJ) |>
+  tibble::rownames_to_column("station_id") |>
+  tidyr::pivot_longer(
+    cols = -station_id,
+    names_to = "time_slot",
+    values_to = "alpha"
+  ) |>
+  mutate(time_slot = as.numeric(time_slot))
+
+ggplot(alpha_df, aes(
+  x = time_slot,
+  y = alpha,
+  group = station_id
+)) +
+  geom_line(alpha = 0.3) +
+  scale_x_continuous(breaks = 0:23) +
+  labs(
+    title = "Station effects (alpha)",
+    x = "Time slot",
+    y = "Alpha"
+  ) +
+  theme_minimal()
+
+```
+
+### beta: day category effects
+
+```{r}
+beta_df <- as.data.frame(beta_IJ) |>
+  tibble::rownames_to_column("day_cat") |>
+  tidyr::pivot_longer(
+    cols = -day_cat,
+    names_to = "time_slot",
+    values_to = "beta"
+  ) |>
+  mutate(time_slot = as.numeric(time_slot))
+
+ggplot(beta_df, aes(
+  x = time_slot,
+  y = beta,
+  color = day_cat,
+  group = day_cat
+)) +
+  geom_line(linewidth = 1) +
+  scale_x_continuous(breaks = 0:23) +
+  labs(
+    title = "Day category effects (beta)",
+    x = "Time slot",
+    y = "Beta",
+    color = "Day category"
+  ) +
+  theme_minimal()
+```
+
+Example: beta_SUPH + mu overlayed on SUPH curves
+
+```{r}
+beta_mu_df <- data.frame(
+  time_slot = 0:23,
+  profile = as.numeric(beta_IJ["SUPH", ] + mu_IJ),
+  day_cat = "SUPH"
+)
+
+ggplot(data_SUPH, aes(
+  x = time_slot,
+  y = percentage_entering,
+  group = station_id
+)) +
+  geom_line(alpha = 0.15, color = "grey50") +
+  geom_line(
+    data = beta_mu_df,
+    aes(x = time_slot, y = profile, color = day_cat),
+    linewidth = 1.2,
+    inherit.aes = FALSE
+  ) +
+  scale_x_continuous(breaks = 0:23) +
+  labs(
+    title = "SUPH: observed curves vs reconstructed profile",
+    x = "Time slot",
+    y = "Percentage entering",
+    color = "Day category"
+  ) +
+  theme_minimal()
+```
