@@ -291,10 +291,6 @@ ggplot(data_SUPH, aes(
   theme_minimal()
 ```
 
-
-
-
-
 ## Implement H-score function
 
 (As in Definition 2.2 of the paper)
@@ -326,8 +322,122 @@ compute_h_score <- function(bicluster, mu_IJ, alpha_IJ, beta_IJ){
 
 ```
 
-Check in the whole dataset
+Check on the whole dataset
 
 ```{r}
 compute_h_score(whole_dataset_bicluster, mu_IJ, alpha_IJ, beta_IJ)
 ```
+
+
+## Compute residual matrix, get scores
+See page 8 of the paper
+
+```{r}
+compute_residual_scores <- function(bicluster, mu_IJ, alpha_IJ, beta_IJ){
+  # Given the bicluster, computes the residuals matrix.
+  # The residuals are considered as ||f_ij-\bar f_ij||_{L2}^2
+  card_I = dim(bicluster)[1]
+  card_J = dim(bicluster)[2]
+  n_slots = dim(bicluster)[3]
+  
+  d = matrix(0, nrow = card_I, ncol = card_J, dimnames = list(dimnames(bicluster)[[1]], dimnames(bicluster)[[2]]))
+  
+  for(i in seq_len(card_I)) {
+    for(j in seq_len(card_J)){
+      for(t in seq_len(n_slots)){
+        d[i,j]= d[i,j] +  (bicluster[i,j,t]-(mu_IJ[t]+alpha_IJ[i,t]+beta_IJ[j,t]))^2
+      }
+    }
+  }
+  return(d)
+}
+
+get_scores <- function(bicluster){
+  properties = compute_bicluster_properties(bicluster)
+  d = compute_residual_scores(bicluster, properties$mu_IJ, properties$alpha_IJ, properties$beta_IJ)
+  
+  list(H = mean(d), row = rowMeans(d), col = colMeans(d))
+}
+```
+
+### Test on the whole dataset
+```{r}
+props <- compute_bicluster_properties(whole_dataset_bicluster)
+get_scores(whole_dataset_bicluster)$H # coincides with compute_h_function, as expected
+get_scores(whole_dataset_bicluster)$row
+get_scores(whole_dataset_bicluster)$col
+```
+
+
+## Functonal Cheng and Church algorithm (greedy) implementation
+
+I divided the implementation by separating the single phases making them as standalone functions.
+
+- Multiple Node Deletion Phase
+  Every cell (i,j) has a residual: how much the curve deviates from the additive model mu(t)+alpha_i(t)+beta_j(t).
+  From these residuals, we obtain the mean residual of the i-th row and the mean residual of the j-th column.
+  H contains the mean of all residuals.
+  We remove all the rows and columns having a score grater than theta*H until H<=delta
+
+```{r}
+
+# Multiple Node Deletion Phase
+delete_rows <- function(bicluster, theta){
+  scores = get_scores(bicluster)
+  keep = scores$row <= theta * scores$H
+  return(bicluster[keep, , , drop=FALSE])
+}
+delete_cols <- function(bicluster, theta){
+  scores = get_scores(bicluster)
+  keep = scores$row <= theta * scores$H
+  return(bicluster[ ,keep, , drop=FALSE])
+}
+
+multiple_node_deletion <- function(bicluster, delta, theta){
+  repeat {
+    n_before = sum(dim(bicluster)[1:2])
+    
+    # BULKY ROW DELETION PHASE
+    if(get_scores(bicluster)$H <= delta){
+      # the bicluster is 'good' already, no need to remove rows/columns
+      break 
+    }
+    else{
+      # the bicluster H score is high, remove rows
+      bicluster = delete_rows(bicluster,theta)
+    }
+    # BULKY COLUMNS DELETION PHASE
+    if(get_scores(bicluster)$H <= delta){
+      # the bicluster is 'good' already, no need to remove rows/columns
+      break 
+    }
+    else{
+      # the bicluster H score is high, remove rows
+      bicluster = delete_cols(bicluster,theta)
+    }
+  }
+}
+
+
+run_funCC(A, delta, theta, maxIter){
+  # A is the original dataset, still assumed to be a "bicluster" object
+  # delta>=0 is the maximum acceptable H-score
+  # theta >= 1 is a parameter for Multiple Node Deletion
+  # maxIter is the maximum number of allowed iterations
+  
+  #biclusters = []
+  #unassigned_bicluster
+  
+  M = A # M is the set of biggest submatrices
+  
+  while(iter<maxIter & M!=0){
+    # Multiple node detetion phase
+    
+    # Single node deletion phase
+    
+    # Node addition phase
+  }
+  
+}
+```
+
