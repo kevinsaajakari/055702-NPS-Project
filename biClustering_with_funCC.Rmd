@@ -302,9 +302,7 @@ ggplot(data_SUPH, aes(
 ```{r}
 
 compute_h_score <- function(bicluster, mu_IJ, alpha_IJ, beta_IJ){
-  
-  I_set <- dimnames(bicluster)[[1]]
-  J_set <- dimnames(bicluster)[[2]]
+
   slots <- dimnames(bicluster)[[3]]
 
   card_I  <- dim(bicluster)[1]
@@ -315,14 +313,21 @@ compute_h_score <- function(bicluster, mu_IJ, alpha_IJ, beta_IJ){
   for (i in 1:card_I){
     for(j in 1:card_J){
       
-      # compute the integral, that in our case is discrete
-      for(t in slots){
-        
+      # compute the L2 norm, that in our case is a discrete integral
+      for(t in seq_len(n_slots)){
+        # \bar f_ij(t) = \mu(t) + \alpha_i(t) + \beta_j(t)
+        H = H+(bicluster[i,j,t]-(mu_IJ[t]+alpha_IJ[i,t]+beta_IJ[j,t]))^2
       }
     }
   }
+  H = H/(card_I*card_J)
+  return(H)
 }
 
+```
 
+Check in the whole dataset
 
+```{r}
+compute_h_score(whole_dataset_bicluster, mu_IJ, alpha_IJ, beta_IJ)
 ```
