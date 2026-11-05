@@ -5,11 +5,12 @@ output: html_document
 
 # Loading
 
-Loading usefull packages
+Loading useful packages
 
 ```{r}
 library(tidyverse)
 library(ggplot2)
+library(compositions)
 ```
 
 Loading raw data
@@ -284,8 +285,10 @@ data <- data %>% group_by(station_id, day_cat) %>% mutate(percentage_entering = 
 
 # Creating useful data containers
 
+3D array with rows as stations, columns as day types and cells (or depth) as the hourly distribution
+
 ```{r}
-matrix_3d <- data %>% select(
+array_3d <- data %>% select(
   station_id, 
   day_cat, 
   time_slot,
@@ -300,8 +303,29 @@ matrix_3d <- data %>% select(
   simplify2array
 ```
 
+3D array with Centred Log Ratio Transformation applied
+
+```{r}
+array_3d_clr <- aperm(apply(array_3d, c(1, 2), clr), c(2, 3, 1))
+```
+
+Tibble with station information
+
+```{r}
+stations <- data %>% select(
+  station_id, 
+  connection_id, 
+  station_name
+) %>% distinct()
+```
+
 # Saving cleaned data for next steps
 
 ```{r}
 write.csv(data, "cleaned_data.csv", row.names = FALSE)
+write.csv(stations, "stations.csv", row.names = FALSE)
+save(array_3d, file = "array_3d.rda")
+save(array_3d_clr, file = "array_3d_clr.rda")
 ```
+
+To load data contained in `.rda` files, use for example `load("array_3d.rda")`. It will load `array_3d` in the environment.
