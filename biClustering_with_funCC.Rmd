@@ -391,8 +391,6 @@ multiple_node_deletion <- function(bicluster, delta, theta){
     else{
       bicluster = delete_rows(bicluster,theta)
     }
-    print("row bicluster")
-    print(get_scores(bicluster)$H)
     # BULKY COLUMNS DELETION PHASE
     if(get_scores(bicluster)$H <= theta*delta){
       break 
@@ -400,9 +398,6 @@ multiple_node_deletion <- function(bicluster, delta, theta){
     else{
       bicluster = delete_cols(bicluster,theta)
     }
-    print("col bicluster")
-    print(get_scores(bicluster)$H)
-    
     if (sum(dim(bicluster)[1:2]) == n_before) break # prevents from running forever
   }
   return(bicluster)
@@ -440,7 +435,7 @@ find_worst_node <- function(bicluster, min_rows=2, min_cols=2){
     return(list(type = "row", index = which.max(scores$row), score=row_max))
   }
   else{
-    return(list(type = "col", index = which.max(scores$col, score = col_max)))
+    return(list(type = "col", index = which.max(scores$col), score = col_max))
   }
 }
 
@@ -455,7 +450,6 @@ remove_node <- function(bicluster, node) {
 
 single_node_deletion <- function(bicluster, delta, min_rows = 2, min_cols = 2){
   while (get_scores(bicluster)$H > delta) {
-    print("I entered")
     node = find_worst_node(bicluster, min_rows, min_cols)
     if(is.null(node)) break
     
@@ -567,9 +561,9 @@ node_addition <- function(full, bicluster) {
 ```{r}
 
 refine_bicluster <- function(M, delta, theta) {
-  bic = multiple_node_deletion(M_cube, delta, theta)
+  bic = multiple_node_deletion(M, delta, theta)
   bic = single_node_deletion(bic, delta)
-  bic = node_addition(M_cube, bic)
+  bic = node_addition(M, bic)
   return(bic)
 }
 
