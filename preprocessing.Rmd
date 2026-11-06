@@ -5,11 +5,12 @@ output: html_document
 
 # Loading
 
-Loading usefull packages
+Loading useful packages
 
 ```{r}
 library(tidyverse)
 library(ggplot2)
+library(compositions)
 ```
 
 Loading raw data
@@ -17,6 +18,46 @@ Loading raw data
 ```{r}
 raw_data <- read.csv("validations-reseau-ferre-profils-horaires-par-jour-type-2eme-trimestre.csv", sep = ";")
 colnames(raw_data)
+```
+
+# Recovering altered data
+
+```{r}
+raw_data <- raw_data %>% mutate(
+  ID_ZDC = if_else((
+    CODE_STIF_ARRET == "ND" & 
+      CAT_JOUR == "SAVS" & 
+      CODE_STIF_TRNS == "100"
+  ),
+  71799, 
+  ID_ZDC
+  ),
+  LIBELLE_ARRET = if_else((
+    CODE_STIF_ARRET == "ND" & 
+      CAT_JOUR == "SAVS" & 
+      CODE_STIF_TRNS == "100"
+  ),
+  "PTE D.BAGNOLET", 
+  LIBELLE_ARRET
+  ),
+  CODE_STIF_RES = if_else((
+    CODE_STIF_ARRET == "ND" & 
+      CAT_JOUR == "SAVS" & 
+      CODE_STIF_TRNS == "100"
+  ),
+  "110", 
+  CODE_STIF_RES
+  ),
+  
+  CODE_STIF_ARRET = if_else((
+    CODE_STIF_ARRET == "ND" & 
+      CAT_JOUR == "SAVS" & 
+      CODE_STIF_TRNS == "100"
+  ),
+  "684", 
+  CODE_STIF_ARRET
+  )
+)
 ```
 
 # Column selection and translation
@@ -165,23 +206,126 @@ Inspecting `percentage_entering`
 data %>% filter(is.na(percentage_entering) | percentage_entering < 0 & percentage_entering > 100)
 ```
 
-## Removing inconsistent data 
+Checking that all day types exists for each station
+
+```{r}
+data %>% select(station_id, day_cat) %>% distinct() %>% group_by(station_id) %>% count() %>% ggplot(data = ., aes(n)) + geom_bar()
+```
+
+## Removing inconsistent data
 
 Checking that all distributions sum up to 100%
 
 ```{r}
-ggplot(data %>% group_by(station_id, day_cat) %>% summarise(tot = sum(percentage_entering)), aes(tot)) + geom_bar()
+data %>% group_by(station_id, day_cat) %>% summarise(tot = sum(percentage_entering)) %>% ggplot(data = ., aes(tot)) + geom_bar()
 ```
 
-There is some inconsistency (probably associated to number rounding), we correct it.
+There is some inconsistency (probably associated to number rounding), we will correct it later. Checking if all points exists
 
 ```{r}
-
+data %>% group_by(station_id, day_cat) %>% count() %>% ggplot(data = ., aes(n)) + geom_bar()
 ```
 
+Checking which time point is mostly missing
 
-## Saving cleaned data for next steps
+```{r}
+ggplot(data, aes(time_slot)) + geom_bar()
+```
+
+Given that every distributions sums up to approximately 100%, we can add missing points by giving them a zero value.
+
+```{r}
+data <- data %>% complete(
+  time_slot, 
+  day_cat, 
+  nesting(station_id, 
+          connection_id, 
+          station_name
+  ), 
+  fill = list(percentage_entering = 0.)
+)
+```
+
+Checking zero values
+
+```{r}
+data %>% filter(percentage_entering == 0) %>% ggplot(data = ., aes(day_cat)) + geom_bar()
+```
+
+```{r}
+data %>% group_by(time_slot) %>% summarize(zero_freq = mean(percentage_entering  == 0)) %>% plot()
+```
+
+There is no clear cut-off, we transform all zero values in near-zero values
+
+```{r}
+data <- data %>% mutate(percentage_entering = ifelse(percentage_entering == 0, 0.01, percentage_entering))
+```
+
+We check normalization
+
+```{r}
+data %>% group_by(station_id, day_cat) %>% summarise(tot = sum(percentage_entering)) %>% ggplot(data = ., aes(tot)) + geom_bar()
+```
+
+```{r}
+data %>% group_by(station_id, day_cat) %>% summarise(error = (sum(percentage_entering)-100)/0.01)
+```
+
+```{r}
+normalise <- function(vec){
+  error <- round((sum(vec) - 100) * 100)
+  nb_changes <- abs(error)
+  sgn <- sign(error)
+  return(vec - sgn * 0.01 * rmultinom(1, nb_changes, prob = vec * (100 - vec)))
+}
+
+data <- data %>% group_by(station_id, day_cat) %>% mutate(percentage_entering = normalise(percentage_entering)) %>% ungroup()
+```
+
+# Creating useful data containers
+
+3D array with rows as stations, columns as day types and cells (or depth) as the hourly distribution
+
+```{r}
+array_3d <- data %>% select(
+  station_id, 
+  day_cat, 
+  time_slot,
+  percentage_entering
+) %>% pivot_wider(
+  names_from = day_cat, 
+  values_from = percentage_entering
+) %>% {split(.[setdiff(names(.), "time_slot")], .$time_slot)} %>% 
+  map(~ .x %>% 
+        column_to_rownames('station_id') %>% 
+        as.matrix) %>% 
+  simplify2array
+```
+
+3D array with Centred Log Ratio Transformation applied
+
+```{r}
+array_3d_clr <- aperm(apply(array_3d, c(1, 2), clr), c(2, 3, 1))
+```
+
+Tibble with station information
+
+```{r}
+stations <- data %>% select(
+  station_id, 
+  connection_id, 
+  station_name
+) %>% distinct()
+```
+
+# Saving cleaned data for next steps
 
 ```{r}
 write.csv(data, "cleaned_data.csv", row.names = FALSE)
+write.csv(stations, "stations.csv", row.names = FALSE)
+save(array_3d, file = "array_3d.rda")
+save(array_3d_clr, file = "array_3d_clr.rda")
 ```
+
+To load data contained in `.rda` files, use for example `load("array_3d.rda")`. It will load `array_3d` in the environment.
