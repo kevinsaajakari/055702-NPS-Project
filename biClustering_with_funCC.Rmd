@@ -31,6 +31,7 @@ library(ggplot2)
 
 ```{r}
 data <- read.csv("cleaned_data.csv", sep = ",")
+load("array_3d.rda")
 ```
 
 ## Visualize the curves, splitted by type of day
@@ -168,6 +169,7 @@ compute_bicluster_properties <- function(bicluster) {
 }
 
 ```
+
 
 ## Check on global set
 
@@ -599,6 +601,10 @@ props <- compute_bicluster_properties(whole_dataset_bicluster)
 get_scores(whole_dataset_bicluster)$H # coincides with compute_h_function, as expected
 get_scores(whole_dataset_bicluster)$row
 get_scores(whole_dataset_bicluster)$col
+```
+
+```{r}
+get_scores(array_3d)$H
 ```
 
 ### multiple_node_deletion() and single_node_deletion() Testing
