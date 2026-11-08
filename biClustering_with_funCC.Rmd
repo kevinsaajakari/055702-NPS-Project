@@ -11,21 +11,21 @@ knitr::opts_chunk$set(echo = TRUE)
 rm(list = ls())
 ```
 
-# funCC BiClustering
+# FunCC BiClustering
 
-## Importing useful libraries
+## Importing libraries
 
 ```{r}
+#install.packages(c("patchwork", "tidyverse", "ggplot2"))
+
 library(tidyverse)
 library(ggplot2)
-```
+library(patchwork)
 
-### FunCC Installation
-
-```{r}
 #install.packages(c("remotes", "biclust", "reshape", "RColorBrewer", "narray"))
 #remotes::install_github("cran/FunCC")
 ```
+
 
 ## Loading data from preprocessing step
 
@@ -34,50 +34,9 @@ data <- read.csv("cleaned_data.csv", sep = ",")
 load("array_3d.rda")
 ```
 
-## Visualize the curves, splitted by type of day
+## Definition of base utility function from paper
 
-```{r}
-unique(data$day_cat)
-```
-- WD: Working day (outside of school holidays periods)
-- WDSH: Working day during school holidays
-- SA: Saturday (outside of school holidays periods)
-- SASH: Saturday during school holidays
-- SUPH: Sunday and bank holidays
-
-```{r}
-plot_curves <- function(data_to_plot) {
-  ggplot(data_to_plot, aes(
-    x = time_slot,
-    y = percentage_entering,
-    group = station_id
-  )) +
-    geom_line(alpha = 0.2) +
-    facet_wrap(~day_cat) +
-    scale_x_continuous(breaks = 0:23) +
-    theme_minimal()
-}
-
-data_WDSH <- data %>%
-  filter(day_cat == 'WDSH')
-data_SA <- data %>%
-  filter(day_cat == 'SA')
-data_SASH <- data %>%
-  filter(day_cat == 'SASH')
-data_SUPH <- data %>%
-  filter(day_cat == 'SUPH')
-data_WD <- data %>%
-  filter(day_cat == 'WD')
-
-plot_curves(data_WD)
-plot_curves(data_WDSH)
-plot_curves(data_SA)
-plot_curves(data_SASH)
-plot_curves(data_SUPH)
-
-```
-
-## Definition of function for computing bicluster properties
+### Definition of function for computing bicluster properties
 
 See Definition 2.1 in the FunCC paper.
 
@@ -170,12 +129,115 @@ compute_bicluster_properties <- function(bicluster) {
 
 ```
 
+### H-score function(s)
 
-## Check on global set
+(As in Definition 2.2 of the paper)
 
 ```{r}
-whole_dataset_bicluster <- create_bicluster(data, 'station_id', 'day_cat', 'time_slot', 'percentage_entering')
-res <- compute_bicluster_properties(whole_dataset_bicluster)
+compute_h_score <- function(bicluster, mu_IJ, alpha_IJ, beta_IJ){
+
+  slots <- dimnames(bicluster)[[3]]
+
+  card_I  <- dim(bicluster)[1]
+  card_J  <- dim(bicluster)[2]
+  n_slots <- dim(bicluster)[3]
+  
+  H = 0
+  for (i in 1:card_I){
+    for(j in 1:card_J){
+      
+      # compute the L2 norm, that in our case is a discrete integral
+      for(t in seq_len(n_slots)){
+        # \bar f_ij(t) = \mu(t) + \alpha_i(t) + \beta_j(t)
+        H = H+(bicluster[i,j,t]-(mu_IJ[t]+alpha_IJ[i,t]+beta_IJ[j,t]))^2
+      }
+    }
+  }
+  H = H/(card_I*card_J)
+  return(H)
+}
+```
+
+#### Compute residual matrix, get scores
+
+See page 8 of the paper
+
+```{r}
+compute_residual_scores <- function(bicluster, mu_IJ, alpha_IJ, beta_IJ){
+  # Given the bicluster, computes the residuals matrix.
+  # The residuals are considered as ||f_ij-\bar f_ij||_{L2}^2
+  card_I = dim(bicluster)[1]
+  card_J = dim(bicluster)[2]
+  n_slots = dim(bicluster)[3]
+  
+  d = matrix(0, nrow = card_I, ncol = card_J, dimnames = list(dimnames(bicluster)[[1]], dimnames(bicluster)[[2]]))
+  
+  for(i in seq_len(card_I)) {
+    for(j in seq_len(card_J)){
+      for(t in seq_len(n_slots)){
+        d[i,j]= d[i,j] +  (bicluster[i,j,t]-(mu_IJ[t]+alpha_IJ[i,t]+beta_IJ[j,t]))^2
+      }
+    }
+  }
+  return(d)
+}
+
+get_scores <- function(bicluster){
+  properties = compute_bicluster_properties(bicluster)
+  d = compute_residual_scores(bicluster, properties$mu_IJ, properties$alpha_IJ, properties$beta_IJ)
+  
+  list(H = mean(d), row = rowMeans(d), col = colMeans(d))
+}
+```
+
+# Preliminary testing on global dataset and visualizations
+
+## Visualize the curves, splitted by type of day
+
+```{r}
+unique(data$day_cat)
+```
+- WD: Working day (outside of school holidays periods)
+- WDSH: Working day during school holidays
+- SA: Saturday (outside of school holidays periods)
+- SASH: Saturday during school holidays
+- SUPH: Sunday and bank holidays
+
+```{r}
+plot_curves <- function(data_to_plot) {
+  ggplot(data_to_plot, aes(
+    x = time_slot,
+    y = percentage_entering,
+    group = station_id
+  )) +
+    geom_line(alpha = 0.2) +
+    facet_wrap(~day_cat) +
+    scale_x_continuous(breaks = 0:23) +
+    theme_minimal()
+}
+
+data_WDSH <- data %>%
+  filter(day_cat == 'WDSH')
+data_SA <- data %>%
+  filter(day_cat == 'SA')
+data_SASH <- data %>%
+  filter(day_cat == 'SASH')
+data_SUPH <- data %>%
+  filter(day_cat == 'SUPH')
+data_WD <- data %>%
+  filter(day_cat == 'WD')
+
+plot_curves(data_WD)
+plot_curves(data_WDSH)
+plot_curves(data_SA)
+plot_curves(data_SASH)
+plot_curves(data_SUPH)
+```
+
+## Extract mu, alpha and beta of the whole dataset (considered as a bicluster)
+
+```{r}
+res <- compute_bicluster_properties(array_3d)
 
 mu_IJ    <- res$mu_IJ
 alpha_IJ <- res$alpha_IJ
@@ -263,7 +325,7 @@ ggplot(beta_df, aes(
   theme_minimal()
 ```
 
-Example: beta_SUPH + mu overlayed on SUPH curves
+### Example: beta_SUPH + mu overlayed on SUPH curves
 
 ```{r}
 beta_mu_df <- data.frame(
@@ -294,73 +356,12 @@ ggplot(data_SUPH, aes(
   theme_minimal()
 ```
 
-## Implement H-score function
 
-(As in Definition 2.2 of the paper)
-
-```{r}
-compute_h_score <- function(bicluster, mu_IJ, alpha_IJ, beta_IJ){
-
-  slots <- dimnames(bicluster)[[3]]
-
-  card_I  <- dim(bicluster)[1]
-  card_J  <- dim(bicluster)[2]
-  n_slots <- dim(bicluster)[3]
-  
-  H = 0
-  for (i in 1:card_I){
-    for(j in 1:card_J){
-      
-      # compute the L2 norm, that in our case is a discrete integral
-      for(t in seq_len(n_slots)){
-        # \bar f_ij(t) = \mu(t) + \alpha_i(t) + \beta_j(t)
-        H = H+(bicluster[i,j,t]-(mu_IJ[t]+alpha_IJ[i,t]+beta_IJ[j,t]))^2
-      }
-    }
-  }
-  H = H/(card_I*card_J)
-  return(H)
-}
-```
-
-## Compute residual matrix, get scores
-
-See page 8 of the paper
-
-```{r}
-compute_residual_scores <- function(bicluster, mu_IJ, alpha_IJ, beta_IJ){
-  # Given the bicluster, computes the residuals matrix.
-  # The residuals are considered as ||f_ij-\bar f_ij||_{L2}^2
-  card_I = dim(bicluster)[1]
-  card_J = dim(bicluster)[2]
-  n_slots = dim(bicluster)[3]
-  
-  d = matrix(0, nrow = card_I, ncol = card_J, dimnames = list(dimnames(bicluster)[[1]], dimnames(bicluster)[[2]]))
-  
-  for(i in seq_len(card_I)) {
-    for(j in seq_len(card_J)){
-      for(t in seq_len(n_slots)){
-        d[i,j]= d[i,j] +  (bicluster[i,j,t]-(mu_IJ[t]+alpha_IJ[i,t]+beta_IJ[j,t]))^2
-      }
-    }
-  }
-  return(d)
-}
-
-get_scores <- function(bicluster){
-  properties = compute_bicluster_properties(bicluster)
-  d = compute_residual_scores(bicluster, properties$mu_IJ, properties$alpha_IJ, properties$beta_IJ)
-  
-  list(H = mean(d), row = rowMeans(d), col = colMeans(d))
-}
-```
-
-
-## Functonal Cheng and Church algorithm (greedy) implementation
+# Functonal Cheng and Church algorithm (greedy) implementation
 
 I divided the implementation by separating the single phases making them as standalone functions.
 
-### Multiple Node Deletion Phase
+## Multiple Node Deletion Phase
 
 From paper: This phase removes a group of rows/columns with score grater than theta*H-score.
 
@@ -368,6 +369,8 @@ From paper: This phase removes a group of rows/columns with score grater than th
 We collect these residuals into a |I|x|J| matrix d, returned by compute_residual_scores().
 - From d, we obtain the mean residual of the i-th row, the mean residual of the j-th column and the mean of all residuals, that is our H-score. We compute these values through the get_score() function above.
 - We remove all the rows having a score grater than theta\times H, then we recompute the scores and remove all the columns with score greater than theta \times H
+
+### Multiple Node Deletion: Utility functions
 
 ```{r}
 # Multiple Node Deletion Phase
@@ -382,6 +385,11 @@ delete_cols <- function(bicluster, theta){
   return(bicluster[ ,keep, , drop=FALSE])
 }
 
+```
+
+### Multiple Node Deletion: main function
+
+```{r}
 multiple_node_deletion <- function(bicluster, delta, theta){
   repeat {
     n_before = sum(dim(bicluster)[1:2])
@@ -406,13 +414,15 @@ multiple_node_deletion <- function(bicluster, delta, theta){
 }
 ```
 
-### Single Node Deletion Phase
+
+## Single Node Deletion Phase
 
 From paper: this phase removes the rows/columns that reduce the H-score the most, while H-score>delta.
 
 - We start defining a function that help us finding which row/col is effectively the worse.
   - DESIGN CHOICE: We set a minimum number of rows and a minimum number of columns. Under that, we can't remove: would make no sense to have singletons.
 
+### Single Node Deletion: Utility functions
 
 ```{r}
 # Single Node Deletion Phase
@@ -449,7 +459,11 @@ remove_node <- function(bicluster, node) {
     return(bicluster[, -node$index, , drop=FALSE])
   }
 }
+```
 
+### Single Node Deletion: main function
+
+```{r}
 single_node_deletion <- function(bicluster, delta, min_rows = 2, min_cols = 2){
   while (get_scores(bicluster)$H > delta) {
     node = find_worst_node(bicluster, min_rows, min_cols)
@@ -462,9 +476,11 @@ single_node_deletion <- function(bicluster, delta, min_rows = 2, min_cols = 2){
 }
 ```
 
-### Node Addition Phase
+## Node Addition Phase
 
 add rows/columns that do not increase the H-score.
+
+### Node Addition Phase: Utility functions
 
 ```{r}
 score_new_rows <- function(full, bicluster, mu_IJ, alpha_IJ, beta_IJ){
@@ -523,33 +539,36 @@ add_rows <- function(full, bicluster) {
   to_add = names(scores)[scores <=H]
   if (length(to_add) == 0) return(bicluster)
   
-  rows_new <- dimnames(full)[[1]] %in% c(dimnames(bicluster)[[1]], to_add)
-  cols_old <- dimnames(full)[[2]] %in% dimnames(bicluster)[[2]]
+  rows_new = dimnames(full)[[1]] %in% c(dimnames(bicluster)[[1]], to_add)
+  cols_old = dimnames(full)[[2]] %in% dimnames(bicluster)[[2]]
   return(full[rows_new, cols_old, , drop = FALSE])
 }
 
 
 
 add_cols <- function(full, bicluster) {
-  props  <- compute_bicluster_properties(bicluster)
-  H      <- get_scores(bicluster)$H
-  scores <- score_new_cols(full, bicluster, props$mu_IJ, props$alpha_IJ, props$beta_IJ)
+  props  = compute_bicluster_properties(bicluster)
+  H      = get_scores(bicluster)$H
+  scores = score_new_cols(full, bicluster, props$mu_IJ, props$alpha_IJ, props$beta_IJ)
 
-  to_add <- names(scores)[scores <= H]
+  to_add = names(scores)[scores <= H]
   if (length(to_add) == 0) return(bicluster)
 
-  rows_old <- dimnames(full)[[1]] %in% dimnames(bicluster)[[1]]
-  cols_new <- dimnames(full)[[2]] %in% c(dimnames(bicluster)[[2]], to_add)
+  rows_old = dimnames(full)[[1]] %in% dimnames(bicluster)[[1]]
+  cols_new = dimnames(full)[[2]] %in% c(dimnames(bicluster)[[2]], to_add)
   return(full[rows_old, cols_new, , drop = FALSE])
 }
+```
 
+### Node Addition: main function
 
+```{r}
 node_addition <- function(full, bicluster) {
 
   repeat {
-    n_before <- sum(dim(bicluster)[1:2])
-    bicluster <- add_cols(full, bicluster)
-    bicluster <- add_rows(full, bicluster)
+    n_before = sum(dim(bicluster)[1:2])
+    bicluster = add_cols(full, bicluster)
+    bicluster = add_rows(full, bicluster)
 
     if (sum(dim(bicluster)[1:2]) == n_before) break   # nothing added
   }
@@ -558,9 +577,47 @@ node_addition <- function(full, bicluster) {
 
 ```
 
-### FunCC Runner
+## FunCC Runner
+
+### FunCC Utility functions
 
 ```{r}
+bicluster_indices <- function(M, bic) {
+  list(
+    rows = match(dimnames(bic)[[1]], dimnames(M)[[1]]),
+    cols = match(dimnames(bic)[[2]], dimnames(M)[[2]])
+  )
+}
+
+mask_bicluster <- function(M, bic) {
+  idx  = bicluster_indices(M, bic)
+  rows = idx$rows
+  cols = idx$cols
+  nT   = dim(M)[3]
+
+  rng = range(M, na.rm = TRUE)
+  M[rows, cols, ] = runif(length(rows) * length(cols) * nT, rng[1], rng[2])
+  M
+}
+
+assigned_matrix <- function(M, biclusters) {
+  asg = matrix(FALSE, dim(M)[1], dim(M)[2],
+                dimnames = list(dimnames(M)[[1]], dimnames(M)[[2]]))
+  for (b in biclusters) {
+    idx = bicluster_indices(M, b)
+    asg[idx$rows, idx$cols] = TRUE
+  }
+  asg
+}
+
+get_unassigned <- function(M, biclusters) {
+  asg = assigned_matrix(M, biclusters)
+  which(!asg, arr.ind = TRUE) 
+}
+
+is_empty_bicluster <- function(M) {
+  is.null(M) || length(M) == 0 || any(dim(M) == 0)
+}
 
 refine_bicluster <- function(M, delta, theta) {
   bic = multiple_node_deletion(M, delta, theta)
@@ -569,64 +626,313 @@ refine_bicluster <- function(M, delta, theta) {
   return(bic)
 }
 
-run_funCC <- function(A, delta, theta, maxIter){
-  # A is the original dataset, still assumed to be a "bicluster" object
-  # delta>=0 is the maximum acceptable H-score
-  # theta >= 1 is a parameter for Multiple Node Deletion
-  # maxIter is the maximum number of allowed iterations
-  
-  #biclusters = []
-  #unassigned_bicluster
-  
-  M = A # M is the set of biggest submatrices
-  
-  while(iter<maxIter & M!=0){
-    # Multiple node detetion phase
-    
-    # Single node deletion phase
-    
-    # Node addition phase
+monitor_iteration <- function(A, biclusters, history, delta) {
+  acc <- history[history$accepted, ]
+
+  p_h <- ggplot() +
+    geom_hline(yintercept = delta, linetype = "dashed", colour = "grey40") +
+    geom_line(data = acc, aes(iter, mean_h, colour = "Cumulative mean H")) +
+    geom_point(data = acc, aes(iter, mean_h, colour = "Cumulative mean H")) +
+    geom_point(data = history, aes(iter, h, colour = "Single bicluster H",
+                                       shape = accepted)) +
+    scale_shape_manual(values = c(`TRUE` = 16, `FALSE` = 4), name = "Accepted") +
+    labs(x = "Iteration", y = "H-score", colour = NULL,
+         title = paste("Iteration", max(history$iter),
+                       "- accepted biclusters:", nrow(acc)),
+         subtitle = "Dashed line = delta") +
+    theme_minimal() +
+    theme(legend.position = "bottom")
+
+  if (length(biclusters) == 0) return(p_h)
+
+  p_bic <- plot_biclusters_overview(A, biclusters, show_unassigned = TRUE)
+  p_bic / p_h + plot_layout(heights = c(2, 1))
+}
+
+```
+
+### Plot Bicluster Overview function
+
+```{r}
+plot_biclusters_overview <- function(M, biclusters, ncol_facets = 3,
+                                     show_unassigned = TRUE,
+                                     max_unassigned_curves = 300) {
+  K <- length(biclusters)
+  pal <- if (K <= 9) RColorBrewer::brewer.pal(max(K, 3), "Set1")[1:K] else
+    grDevices::hcl.colors(K, "Dark 3")
+  names(pal) <- seq_len(K)
+  grey_col <- "grey50"
+
+  lab <- matrix(0L, dim(M)[1], dim(M)[2],
+                dimnames = list(dimnames(M)[[1]], dimnames(M)[[2]]))
+  for (k in seq_len(K)) {
+    idx <- bicluster_indices(M, biclusters[[k]])
+    lab[idx$rows, idx$cols] <- k
   }
+  asg <- lab > 0
+
+  first_nz <- function(v) { v <- v[v > 0]; if (length(v)) min(v) else K + 1 }
+  r_ord <- order(apply(lab, 1, first_nz))
+  c_ord <- order(apply(lab, 2, first_nz))
+  lab_o <- lab[r_ord, c_ord, drop = FALSE]
+
+  map_df <- expand.grid(row = rownames(lab_o), col = colnames(lab_o),
+                        stringsAsFactors = FALSE)
+  map_df$k    <- as.vector(lab_o)
+  map_df$row  <- factor(map_df$row, levels = rev(rownames(lab_o)))
+  map_df$col  <- factor(map_df$col, levels = colnames(lab_o))
+  map_df$fill <- ifelse(map_df$k == 0, "Unassigned", as.character(map_df$k))
+
+  p_map <- ggplot(map_df, aes(col, row, fill = fill)) +
+    geom_tile() +
+    scale_fill_manual(values = c(pal, Unassigned = grey_col), guide = "none") +
+    labs(x = NULL, y = NULL) +
+    theme_minimal() +
+    theme(axis.text = element_blank(), panel.grid = element_blank())
+
+  to_df <- function(arr, label, colour_id) {
+    df <- as.data.frame.table(arr, responseName = "value", stringsAsFactors = FALSE)
+    names(df)[1:3] <- c("row", "col", "time")
+    df$time  <- as.numeric(df$time)
+    df$time  <- df$time / max(df$time)
+    df$curve <- paste(label, df$row, df$col, sep = "_")
+    df$panel <- label
+    df$id    <- colour_id
+    df
+  }
+
+  curves <- do.call(rbind, lapply(seq_len(K), function(k)
+    to_df(biclusters[[k]], paste("Bi-cluster", k), as.character(k))))
+
+  panel_levels <- paste("Bi-cluster", seq_len(K))
+
+  if (show_unassigned && any(!asg)) {
+    un <- which(!asg, arr.ind = TRUE)
+    if (nrow(un) > max_unassigned_curves)
+      un <- un[sample(nrow(un), max_unassigned_curves), , drop = FALSE]
+    un_df <- do.call(rbind, lapply(seq_len(nrow(un)), function(r) {
+      v <- M[un[r, 1], un[r, 2], ]
+      data.frame(row = dimnames(M)[[1]][un[r, 1]],
+                 col = dimnames(M)[[2]][un[r, 2]],
+                 time = as.numeric(dimnames(M)[[3]]) / max(as.numeric(dimnames(M)[[3]])),
+                 value = as.numeric(v),
+                 curve = paste("Unassigned", un[r, 1], un[r, 2], sep = "_"),
+                 panel = "Unassigned", id = "Unassigned")
+    }))
+    curves <- rbind(curves, un_df)
+    panel_levels <- c(panel_levels, "Unassigned")
+  }
+
+  curves$panel <- factor(curves$panel, levels = panel_levels)
+
+  p_curves <- ggplot(curves, aes(time, value, group = curve, colour = id)) +
+    geom_line(aes(alpha = id == "Unassigned"), linewidth = 0.4) +
+    scale_alpha_manual(values = c(`TRUE` = 0.15, `FALSE` = 0.7), guide = "none") +
+    facet_wrap(~ panel, ncol = ncol_facets) +
+    scale_colour_manual(values = c(pal, Unassigned = grey_col), guide = "none") +
+    labs(x = NULL, y = NULL) +
+    theme_gray() +
+    theme(strip.text = element_text(size = 9))
+
+  p_map + p_curves + plot_layout(widths = c(1, 1.6))
+}
+```
+
+### Complete algorithm
+
+```{r}
+
+run_funCC <- function(A, delta, theta, maxIter,
+                      min_rows = 2, min_cols = 2, max_fails = 5,
+                      monitor = TRUE, plot_every = 1) {
+
+  biclusters = list()
+  M = A
+  iter = 0
+  fails = 0
+  history = data.frame(iter = integer(), accepted = logical(),
+                        n_rows = integer(), n_cols = integer(),
+                        h = numeric(), mean_h = numeric())
+
+  while (iter < maxIter && !is_empty_bicluster(M) && fails < max_fails) {
+    iter = iter + 1
+
+    bic = refine_bicluster(M, delta, theta)
+    if (is_empty_bicluster(bic)) break
+    
+    props = compute_bicluster_properties(bic)
+    h = compute_h_score(bic, props$mu_IJ, props$alpha_IJ, props$beta_IJ)
+    ok = dim(bic)[1] >= min_rows && dim(bic)[2] >= min_cols && h <= delta
+
+    if (ok) {
+      biclusters[[length(biclusters) + 1]] = bic
+      fails = 0
+    } else {
+      fails = fails + 1
+    }
+    M = mask_bicluster(M, bic) 
+
+    prev_h = history$h[history$accepted]
+    mean_h = if (ok) mean(c(prev_h, h)) else
+      if (length(prev_h)) mean(prev_h) else NA_real_
+
+    history[nrow(history) + 1, ] = list(iter, ok, dim(bic)[1], dim(bic)[2],
+                                         h, mean_h)
+
+    if (monitor && iter %% plot_every == 0) {
+      print(monitor_iteration(A, biclusters, history, delta))
+    }
+  }
+
+  attr(biclusters, "history") = history
+  biclusters
+}
+
+```
+
+# Testing and other plotting functions
+
+```{r}
+res <- run_funCC(array_3d, delta = 0.6, theta = 1.2,
+                 maxIter = 10, plot_every = 1)
+
+attr(res, "history")
+```
+
+
+### Final Overview
+
+```{r}
+set.seed(1)
+plot_biclusters_overview(array_3d, res)
+```
+
+### Detailed Overview
+
+```{r}
+plot_bicluster_curves <- function(bic, main = "") {
+  I  <- dimnames(bic)[[1]]
+  J  <- dimnames(bic)[[2]]
+  tt <- as.numeric(dimnames(bic)[[3]])
+
+  op <- par(mfrow = c(1, length(J)), mar = c(4, 4, 2, 1))
+  on.exit(par(op))
+
+  ylim <- range(bic, na.rm = TRUE)
+  cols <- rainbow(length(I))
+
+  for (j in seq_along(J)) {
+    Y <- t(matrix(bic[, j, ], nrow = length(I)))
+    matplot(tt, Y, type = "l", lty = 1, col = cols, ylim = ylim,
+            xlab = "Time", ylab = "Value",
+            main = paste(main, "- column", J[j]))
+  }
+  legend("topright", legend = I, col = cols, lty = 1, cex = 0.6, bty = "n")
+}
+
+plot_bicluster_map <- function(M, biclusters) {
+  lab <- matrix(0, dim(M)[1], dim(M)[2])
+  for (k in seq_along(biclusters)) {
+    idx <- bicluster_indices(M, biclusters[[k]])
+    lab[idx$rows, idx$cols] <- k
+  }
+  pal <- c("grey95", rainbow(length(biclusters)))
+  image(x = seq_len(ncol(lab)), y = seq_len(nrow(lab)), z = t(lab),
+        col = pal, zlim = c(0, length(biclusters)),
+        xlab = "Columns (J)", ylab = "Rows (I)", main = "Biclusters in the dataset")
+  legend("topright", legend = paste("B", seq_along(biclusters)),
+         fill = pal[-1], bty = "n", cex = 0.8)
+}
+
+```
+
+```{r}
+plot_bicluster_map(array_3d, res)
+
+for (k in seq_along(res)) {
+  plot_bicluster_curves(res[[k]], main = paste("Bicluster", k))
 }
 
 ```
 
 
-# Testing
 
-### get_scores() Testing
+### Number of elements per bicluster
 
 ```{r}
-props <- compute_bicluster_properties(whole_dataset_bicluster)
-get_scores(whole_dataset_bicluster)$H # coincides with compute_h_function, as expected
-get_scores(whole_dataset_bicluster)$row
-get_scores(whole_dataset_bicluster)$col
+
+summary_bic <- data.frame(
+  bicluster = seq_along(res),
+  n_rows   = sapply(res, function(b) dim(b)[1]),
+  n_cols = sapply(res, function(b) dim(b)[2]),
+  n_t   = sapply(res, function(b) dim(b)[3])
+)
+
+print(summary_bic)
+dim(array_3d)
+
 ```
 
+## Export of results
+
 ```{r}
-get_scores(array_3d)$H
+
+get_unassigned_bicluster <- function(M, biclusters) {
+  asg <- assigned_matrix(M, biclusters) 
+  nT  <- dim(M)[3]
+
+  U <- M
+  U[rep(as.vector(asg), times = nT)] <- NA   
+
+  un <- which(!asg, arr.ind = TRUE)
+  long <- NULL
+  if (nrow(un) > 0) {
+    n  <- nrow(un)
+    ti <- rep(seq_len(nT), times = n)
+    long <- data.frame(
+      station = dimnames(M)[[1]][rep(un[, 1], each = nT)],
+      column  = dimnames(M)[[2]][rep(un[, 2], each = nT)],
+      time    = dimnames(M)[[3]][ti],
+      value   = M[cbind(rep(un[, 1], each = nT), rep(un[, 2], each = nT), ti)],
+      stringsAsFactors = FALSE
+    )
+  }
+  list(array = U, long = long, n_cells = nrow(un))
+}
+
+u <- get_unassigned_bicluster(array_3d, res)
+
+res_export <- c(res, list(unassigned = u$array))
+names(res_export) <- c(paste0("bicluster_", seq_along(res)), "unassigned")
+attr(res_export, "history") <- attr(res, "history")
+
+saveRDS(res_export, "biclusters.rds")
 ```
 
-### multiple_node_deletion() and single_node_deletion() Testing
+### How to load
+
+Use the following commands:
 
 ```{r}
-H_full <- get_scores(whole_dataset_bicluster)$H
-delta  <- 0.2 * H_full
+res_export <- readRDS("biclusters.rds")
 
-bic_mnd <- multiple_node_deletion(whole_dataset_bicluster, delta, theta = 1.3)
-bic_snd <- single_node_deletion(bic_mnd, delta)
-bic_add <- node_addition(whole_dataset_bicluster,bic_snd)
+unassigned <- res_export[["unassigned"]] # this takes the unassigned elements
+biclusters <- res_export[names(res_export) != "unassigned"] # this takes the actual biclusters
+attr(res, "history") <- attr(res_export, "history") # this is for the FunCC algorithm iterations history (if needed)
+```
 
+### How to use
 
-dim(whole_dataset_bicluster)
-dim(bic_mnd)
-dim(bic_snd)
-dim(bic_add)
-print("--------")
-print(delta)
-get_scores(bic_mnd)$H
-get_scores(bic_snd)$H
-get_scores(bic_add)$H
+```{r}
+length(biclusters)                    # number of accepted biclusters
+b <- biclusters[[1]]                  # first bicluster
+dim(b)                         # |I| x |J| x T
+dimnames(b)[[1]]               # rows (stations)
+dimnames(b)[[2]]               # columns (day_type)
+# EXAMPLE: stations of each bicluster
+stations <- lapply(res, function(b) dimnames(b)[[1]])
 
-dimnames(bic_snd)[1:2]
+# EXAMPLE: average curve of each bicluster (T values)
+mean_curves <- sapply(res, function(b) apply(b, 3, mean))   # T x K matrix
+matplot(mean_curves, type = "l", lty = 1, xlab = "Time", ylab = "Mean value")
 ```
