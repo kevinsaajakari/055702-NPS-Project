@@ -1,0 +1,47 @@
+---
+title: "funCC_package"
+output: html_document
+---
+
+```{r}
+invisible(suppressMessages(suppressWarnings(lapply(c("gsl","fBasics","stringr","stringi","Rmpfr"), require, character.only = TRUE))))
+invisible(suppressMessages(suppressWarnings(lapply(names(sessionInfo()$loadedOnly), require, character.only = TRUE))))
+sessionInfo()
+invisible(lapply(paste0('package:', names(sessionInfo()$otherPkgs)), detach, character.only=TRUE,unload=TRUE))
+
+bspkgs.nb<-sessionInfo()$basePkgs[sessionInfo()$basePkgs!="base"]
+bspkgs.nbu<-bspkgs.nb[bspkgs.nb!="utils"]
+names(bspkgs.nbu)<-bspkgs.nbu
+suppressMessages(invisible(lapply(paste0('package:', names(bspkgs.nbu)), detach, character.only=TRUE,unload=TRUE)))
+```
+
+```{r}
+install.packages(c("glue", "cli", "cpp11", "Rcpp", "vctrs", "stringi", "magrittr", "withr", "S7", "ggplot2", "purrr", "dplyr", "colorspace", "devtools"))
+
+library(devtools)
+
+install_github('Biclustering/biclust')
+install_github('mrtgalvani/FunCC')
+
+library("FunCC")
+library(grDevices)
+```
+
+```{r}
+load("array_3d_clr.rda")
+```
+
+```{r}
+biclust0 <- funcc_biclust(array_3d_clr,delta = 1)
+biclust1 <- funcc_biclust(array_3d,delta = 6)
+funcc_show_bicluster_coverage(array_3d_clr, biclust0)
+funcc_show_bicluster_coverage(array_3d_clr, biclust1)
+funcc_show_bicluster_dimension(array_3d_clr, biclust0)
+funcc_show_bicluster_dimension(array_3d_clr, biclust1)
+funcc_show_bicluster_hscore(array_3d_clr, biclust1)
+funcc_show_bicluster_hscore(array_3d_clr, biclust0)
+funcc_show_block_matrix(array_3d_clr, biclust0)
+funcc_show_block_matrix(array_3d_clr, biclust1)
+funcc_show_results(array_3d, biclust0)
+funcc_show_results(array_3d, biclust1, only.mean = T)
+```
