@@ -15,25 +15,109 @@ names(bspkgs.nbu)<-bspkgs.nbu
 suppressMessages(invisible(lapply(paste0('package:', names(bspkgs.nbu)), detach, character.only=TRUE,unload=TRUE)))
 ```
 
+# Loading package
+
 ```{r}
 install.packages(c("glue", "cli", "cpp11", "Rcpp", "vctrs", "stringi", "magrittr", "withr", "S7", "ggplot2", "purrr", "dplyr", "colorspace", "devtools"))
 
 library(devtools)
 
-install_github('Biclustering/biclust')
-install_github('mrtgalvani/FunCC')
+pak::pak('Biclustering/biclust')
+pak::pak('mrtgalvani/FunCC')
+```
 
+From here restart R (Session -\> Restart R or `Ctrl+Maj+F10`).
+
+```{r}
 library("FunCC")
 library(grDevices)
+library(tidyverse)
 ```
+
+# Loading data
 
 ```{r}
 load("array_3d_clr.rda")
+load("array_3d.rda")
+```
+
+# Selecting value for $\delta$
+
+```{r}
+options(warn=-1)
+res0 <- find_best_delta(array_3d_clr, delta_min = 0.01, delta_max = 1, num_delta = 20)
+res1 <- find_best_delta(array_3d, delta_min = 1, delta_max = 8, num_delta = 20)
+options(warn=0)
+```
+
+Adding metrics
+
+```{r}
+n_curve <- dim(array_3d)[1] * dim(array_3d)[2]
+res1$percent_not_assigned <- 100 * res1$not_assigned / n_curve
+res0$percent_not_assigned <- 100 * res0$not_assigned / n_curve
+```
+
+Percentage of non assigned curves
+
+```{r}
+grDevices::dev.new()
+plot(res1$delta, res1$percent_not_assigned, type = "o", log = "y")
+plot(res0$delta, res0$percent_not_assigned, type = "o", log = "y")
+```
+
+Number of clusters
+
+```{r}
+grDevices::dev.new()
+plot(res1$delta, res1$num_clust, type = "o", log = "")
+plot(res0$delta, res0$num_clust, type = "o", log = "")
+```
+
+H-score
+
+```{r}
+grDevices::dev.new()
+plot(res1$delta, res1$Htot_all_mean, type = "o", log = "")
+plot(res0$delta, res0$Htot_all_mean, type = "o", log = "")
 ```
 
 ```{r}
-biclust0 <- funcc_biclust(array_3d_clr,delta = 1)
-biclust1 <- funcc_biclust(array_3d,delta = 6)
+grDevices::dev.new()
+plot(res1$delta, res1$Htot_sum, type = "o", log = "")
+plot(res0$delta, res0$Htot_sum, type = "o", log = "")
+```
+
+We take $\delta=4.25$ and $\delta_{CLR}=0.5$.
+
+# Selection of $\theta$
+
+```{r}
+thetas <- tibble(theta = seq(from = 1, to = 3, length.out = 10))
+n_rep <- 5
+
+res_theta0 <- thetas %>%
+  mutate(time = sapply(thetas$theta, function(x)system.time(replicate(n = n_rep, expr = {funcc_biclust(array_3d_clr, delta = .5, theta = x)}))[[1]] / n_rep))
+
+res_theta1 <- thetas %>%
+  mutate(time = sapply(thetas$theta, function(x)system.time(replicate(n = n_rep, expr = {funcc_biclust(array_3d, delta = 4.25, theta = x)}))[[1]] / n_rep))
+```
+
+Visualisation
+
+```{r}
+plot(res_theta0, type = "o")
+plot(res_theta1, type = "o")
+```
+
+We choose $\theta=\theta_{CLR}=2.3$.
+
+# Computing clusters
+
+```{r}
+
+biclust0 <- funcc_biclust(array_3d_clr, delta = .5, theta = 2.3)
+biclust1 <- funcc_biclust(array_3d, delta = 4.25, theta = 2.3)
 funcc_show_bicluster_coverage(array_3d_clr, biclust0)
 funcc_show_bicluster_coverage(array_3d_clr, biclust1)
 funcc_show_bicluster_dimension(array_3d_clr, biclust0)
