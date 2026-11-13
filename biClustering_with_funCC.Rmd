@@ -30,8 +30,8 @@ library(patchwork)
 ## Loading data from preprocessing step
 
 ```{r}
-data <- read.csv("cleaned_data.csv", sep = ",")
-load("array_3d.rda")
+data <- read.csv("data/processed/cleaned_data.csv", sep = ",")
+load("data/processed/array_3d.rda")
 ```
 
 ## Definition of base utility function from paper
@@ -906,7 +906,7 @@ res_export <- c(res, list(unassigned = u$array))
 names(res_export) <- c(paste0("bicluster_", seq_along(res)), "unassigned")
 attr(res_export, "history") <- attr(res, "history")
 
-saveRDS(res_export, "biclusters.rds")
+saveRDS(res_export, "data/clustering/biclusters.rds")
 ```
 
 ### How to load
@@ -914,7 +914,7 @@ saveRDS(res_export, "biclusters.rds")
 Use the following commands:
 
 ```{r}
-res_export <- readRDS("biclusters.rds")
+res_export <- readRDS("data/clustering/biclusters.rds")
 
 unassigned <- res_export[["unassigned"]] # this takes the unassigned elements
 biclusters <- res_export[names(res_export) != "unassigned"] # this takes the actual biclusters

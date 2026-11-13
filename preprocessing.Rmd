@@ -16,7 +16,7 @@ library(compositions)
 Loading raw data
 
 ```{r}
-raw_data <- read.csv("validations-reseau-ferre-profils-horaires-par-jour-type-2eme-trimestre.csv", sep = ";")
+raw_data <- read.csv("data/raw/validations-reseau-ferre-profils-horaires-par-jour-type-2eme-trimestre.csv", sep = ";")
 colnames(raw_data)
 ```
 
@@ -322,10 +322,10 @@ stations <- data %>% select(
 # Saving cleaned data for next steps
 
 ```{r}
-write.csv(data, "cleaned_data.csv", row.names = FALSE)
-write.csv(stations, "stations.csv", row.names = FALSE)
-save(array_3d, file = "array_3d.rda")
-save(array_3d_clr, file = "array_3d_clr.rda")
+write.csv(data, "data/processed/cleaned_data.csv", row.names = FALSE)
+write.csv(stations, "data/processed/stations.csv", row.names = FALSE)
+save(array_3d, file = "data/processed/array_3d.rda")
+save(array_3d_clr, file = "data/processed/array_3d_clr.rda")
 ```
 
-To load data contained in `.rda` files, use for example `load("array_3d.rda")`. It will load `array_3d` in the environment.
+To load data contained in `.rda` files, use for example `load("data/processed/array_3d.rda")`. It will load `array_3d` in the environment.

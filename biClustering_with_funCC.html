@@ -379,8 +379,8 @@ library(patchwork)
 </div>
 <div id="loading-data-from-preprocessing-step" class="section level2">
 <h2>Loading data from preprocessing step</h2>
-<pre class="r"><code>data &lt;- read.csv(&quot;cleaned_data.csv&quot;, sep = &quot;,&quot;)
-load(&quot;array_3d.rda&quot;)</code></pre>
+<pre class="r"><code>data &lt;- read.csv(&quot;data/processed/cleaned_data.csv&quot;, sep = &quot;,&quot;)
+load(&quot;data/processed/array_3d.rda&quot;)</code></pre>
 </div>
 <div id="definition-of-base-utility-function-from-paper" class="section level2">
 <h2>Definition of base utility function from paper</h2>
@@ -1237,11 +1237,11 @@ res_export &lt;- c(res, list(unassigned = u$array))
 names(res_export) &lt;- c(paste0(&quot;bicluster_&quot;, seq_along(res)), &quot;unassigned&quot;)
 attr(res_export, &quot;history&quot;) &lt;- attr(res, &quot;history&quot;)
 
-saveRDS(res_export, &quot;biclusters.rds&quot;)</code></pre>
+saveRDS(res_export, &quot;data/clustering/biclusters.rds&quot;)</code></pre>
 <div id="how-to-load" class="section level3">
 <h3>How to load</h3>
 <p>Use the following commands:</p>
-<pre class="r"><code>res_export &lt;- readRDS(&quot;biclusters.rds&quot;)
+<pre class="r"><code>res_export &lt;- readRDS(&quot;data/clustering/biclusters.rds&quot;)
 
 unassigned &lt;- res_export[[&quot;unassigned&quot;]] # this takes the unassigned elements
 biclusters &lt;- res_export[names(res_export) != &quot;unassigned&quot;] # this takes the actual biclusters

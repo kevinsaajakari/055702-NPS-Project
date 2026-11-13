@@ -39,8 +39,8 @@ library(ggplot2)
 # Loading data
 
 ```{r}
-load("array_3d_clr.rda")
-load("array_3d.rda")
+load("data/processed/array_3d_clr.rda")
+load("data/processed/array_3d.rda")
 ```
 
 # Selecting value for $\delta$
@@ -120,8 +120,8 @@ We choose $\theta=\theta_{CLR}=2.3$.
 
 biclust0 <- funcc_biclust(array_3d_clr, delta = .5, theta = 2.3)
 biclust1 <- funcc_biclust(array_3d, delta = 4.25, theta = 2.3)
-saveRDS(list(clr = biclust0, original = biclust0), "funcc_package_fits0.rds")
-saveRDS(list(clr = biclust1, original = biclust1), "funcc_package_fits1.rds")
+saveRDS(list(clr = biclust0, original = biclust0), "data/clustering/funcc_package_fits0.rds")
+saveRDS(list(clr = biclust1, original = biclust1), "data/clustering/funcc_package_fits1.rds")
 ```
 
 # Inspection
@@ -285,6 +285,6 @@ bicluster_curves <- array_3d_clr[biclust0[[1]]@RowxNumber[,bicluster_index0],bic
 # Exporting results
 
 ```{r}
-save(biclust1, file = "biclusters.rda")
-save(biclust0, file = "biclusters_clr.rda")
+save(biclust1, file = "data/clustering/biclusters.rda")
+save(biclust0, file = "data/clustering/biclusters_clr.rda")
 ```

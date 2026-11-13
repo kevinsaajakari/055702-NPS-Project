@@ -38,6 +38,15 @@ We believe that our data set is suitable to answer the following research questi
 
 > How to identify patterns in the use of rail stations in an actionable manner to improve quality of service and security?
 
+### Repository layout
+
+- `data/raw/` holds the original IDFM validation file.
+- `data/processed/` holds the cleaned station table and the hourly arrays written by `preprocessing.Rmd`.
+- `data/clustering/` holds the saved FunCC biclusters and fits.
+- `block2/` holds the rush-hour comparison of regular working days and school-holiday working days.
+
+`preprocessing.Rmd`, `biClustering_with_funCC.Rmd`, and `funCC_package.Rmd` stay in the project root and read and write these folders. Run them with the working directory set to the project root.
+
 ### Tentative Workflow
 
 After eventually applying the Centred Log Ratio transform:

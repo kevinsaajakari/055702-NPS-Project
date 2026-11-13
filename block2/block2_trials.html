@@ -372,13 +372,13 @@ capacity, and so on.</p>
 <code>fits1</code> contains fit on original percentages. We use original
 percentages to interpret the results and the fitting scale to run FunCC
 in the bootstrap.</p>
-<pre class="r"><code>load(&quot;array_3d.rda&quot;)
+<pre class="r"><code>load(&quot;data/processed/array_3d.rda&quot;)
 profiles &lt;- array_3d
 saved_fit &lt;- readRDS(params$fit_file)[[1]]
 delta &lt;- saved_fit$parameter$delta
 
 if (delta == 0.5) {
-  load(&quot;array_3d_clr.rda&quot;) 
+  load(&quot;data/processed/array_3d_clr.rda&quot;) 
   fit_profiles &lt;- array_3d_clr
   } else if (delta == 4.25) {
   fit_profiles &lt;- profiles
@@ -636,7 +636,7 @@ knitr::kable(data.frame(
 entries in two screening windows, 07:00–10:00 and 16:00–19:00. The
 bicluster column shows which saved groups include the station’s WD
 profile.</p>
-<pre class="r"><code>stations &lt;- read.csv(&quot;stations.csv&quot;)
+<pre class="r"><code>stations &lt;- read.csv(&quot;data/processed/stations.csv&quot;)
 wd_blocks &lt;- Filter(function(b) &quot;WD&quot; %in% dimnames(b)[[2]], blocks)
 
 wd_membership &lt;- vapply(ids, function(id) {

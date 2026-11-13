@@ -2,7 +2,7 @@
 title: "Rush-hour validation profiles and FunCC biclusters"
 output: html_document
 params:
-  fit_file: "funcc_package_fits0.rds"
+  fit_file: "data/clustering/funcc_package_fits0.rds"
   B_boot: 20
 ---
 
@@ -15,13 +15,18 @@ We compare regular working days (WD) with working days during school holidays (W
 The `fits0` file contains (CLR) fit, and `fits1` contains fit on original percentages. We use original percentages to interpret the results and the fitting scale to run FunCC in the bootstrap.
 
 ```{r load-data}
-load("array_3d.rda")
+project_dir <- normalizePath(
+  if (file.exists("055702-NPS-Project.Rproj")) "." else ".."
+)
+knitr::opts_knit$set(root.dir = project_dir)
+
+load(file.path(project_dir, "data/processed/array_3d.rda"))
 profiles <- array_3d
-saved_fit <- readRDS(params$fit_file)[[1]]
+saved_fit <- readRDS(file.path(project_dir, params$fit_file))[[1]]
 delta <- saved_fit$parameter$delta
 
 if (delta == 0.5) {
-  load("array_3d_clr.rda") 
+  load(file.path(project_dir, "data/processed/array_3d_clr.rda")) 
   fit_profiles <- array_3d_clr
   } else if (delta == 4.25) {
   fit_profiles <- profiles
@@ -63,7 +68,7 @@ knitr::kable(data.frame(
 Rank stations by the share of regular-working-day (`WD`) entries in two screening windows, 07:00–10:00 and 16:00–19:00. The bicluster column shows which saved groups include the station's WD profile.
 
 ```{r shortlist}
-stations <- read.csv("stations.csv")
+stations <- read.csv(file.path(project_dir, "data/processed/stations.csv"))
 wd_blocks <- Filter(function(b) "WD" %in% dimnames(b)[[2]], blocks)
 
 wd_membership <- vapply(ids, function(id) {

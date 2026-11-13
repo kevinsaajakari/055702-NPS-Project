@@ -401,8 +401,8 @@ library(tidyverse)</code></pre>
 </div>
 <div id="loading-data" class="section level1">
 <h1>Loading data</h1>
-<pre class="r"><code>load(&quot;array_3d_clr.rda&quot;)
-load(&quot;array_3d.rda&quot;)</code></pre>
+<pre class="r"><code>load(&quot;data/processed/array_3d_clr.rda&quot;)
+load(&quot;data/processed/array_3d.rda&quot;)</code></pre>
 </div>
 <div id="selecting-value-for-delta" class="section level1">
 <h1>Selecting value for <span class="math inline">\(\delta\)</span></h1>
@@ -1067,8 +1067,8 @@ bicluster_curves &lt;- array_3d_clr[biclust0[[1]]@RowxNumber[,bicluster_index0],
 </div>
 <div id="exporting-results" class="section level1">
 <h1>Exporting results</h1>
-<pre class="r"><code>save(biclust1, file = &quot;biclusters.rda&quot;)
-save(biclust0, file = &quot;biclusters_clr.rda&quot;)</code></pre>
+<pre class="r"><code>save(biclust1, file = &quot;data/clustering/biclusters.rda&quot;)
+save(biclust0, file = &quot;data/clustering/biclusters_clr.rda&quot;)</code></pre>
 </div>
 
 
