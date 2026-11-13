@@ -4,34 +4,36 @@ output: html_document
 ---
 
 ```{r}
-invisible(suppressMessages(suppressWarnings(lapply(c("gsl","fBasics","stringr","stringi","Rmpfr"), require, character.only = TRUE))))
-invisible(suppressMessages(suppressWarnings(lapply(names(sessionInfo()$loadedOnly), require, character.only = TRUE))))
-sessionInfo()
-invisible(lapply(paste0('package:', names(sessionInfo()$otherPkgs)), detach, character.only=TRUE,unload=TRUE))
+# invisible(suppressMessages(suppressWarnings(lapply(c("gsl","fBasics","stringr","stringi","Rmpfr"), require, character.only = TRUE))))
+# invisible(suppressMessages(suppressWarnings(lapply(names(sessionInfo()$loadedOnly), require, character.only = TRUE))))
+# sessionInfo()
+# invisible(lapply(paste0('package:', names(sessionInfo()$otherPkgs)), detach, character.only=TRUE,unload=TRUE))
 
-bspkgs.nb<-sessionInfo()$basePkgs[sessionInfo()$basePkgs!="base"]
-bspkgs.nbu<-bspkgs.nb[bspkgs.nb!="utils"]
-names(bspkgs.nbu)<-bspkgs.nbu
-suppressMessages(invisible(lapply(paste0('package:', names(bspkgs.nbu)), detach, character.only=TRUE,unload=TRUE)))
+# bspkgs.nb<-sessionInfo()$basePkgs[sessionInfo()$basePkgs!="base"]
+# bspkgs.nbu<-bspkgs.nb[bspkgs.nb!="utils"]
+# names(bspkgs.nbu)<-bspkgs.nbu
+# suppressMessages(invisible(lapply(paste0('package:', names(bspkgs.nbu)), detach, character.only=TRUE,unload=TRUE)))
 ```
 
 # Loading package
 
 ```{r}
-install.packages(c("glue", "cli", "cpp11", "Rcpp", "vctrs", "stringi", "magrittr", "withr", "S7", "ggplot2", "purrr", "dplyr", "colorspace", "devtools"))
+# install.packages(c("glue", "cli", "cpp11", "Rcpp", "vctrs", "stringi", "magrittr", "withr", "S7", "ggplot2", "purrr", "dplyr", "colorspace", "devtools"))
 
-library(devtools)
+# library(devtools)
 
-pak::pak('Biclustering/biclust')
-pak::pak('mrtgalvani/FunCC')
+# pak::pak('Biclustering/biclust')
+# pak::pak('mrtgalvani/FunCC')
 ```
 
 From here restart R (Session -\> Restart R or `Ctrl+Maj+F10`).
 
 ```{r}
 library("FunCC")
+library(biclust)
 library(grDevices)
 library(tidyverse)
+library(ggplot2)
 ```
 
 # Loading data
@@ -120,14 +122,169 @@ biclust0 <- funcc_biclust(array_3d_clr, delta = .5, theta = 2.3)
 biclust1 <- funcc_biclust(array_3d, delta = 4.25, theta = 2.3)
 saveRDS(list(clr = biclust0, original = biclust0), "funcc_package_fits0.rds")
 saveRDS(list(clr = biclust1, original = biclust1), "funcc_package_fits1.rds")
+```
+
+# Inspection
+
+Checking properties
+
+```{r}
+biclust0[[1]]@Number
+biclust1[[1]]@Number
+```
+
+Row attributions to clusters
+
+```{r}
+dim(biclust0[[1]]@RowxNumber)
+dim(biclust1[[1]]@RowxNumber)
+```
+
+Column attributions to clusters
+
+```{r}
+dim(biclust0[[1]]@NumberxCol)
+dim(biclust1[[1]]@NumberxCol)
+```
+
+Creating matrix for cell attribution
+
+```{r}
+cell_attributor <- function(fun_mat, res){
+  x_y=matrix(0,nrow=dim(fun_mat)[1],ncol=dim(fun_mat)[2])
+  i=1
+  if(res@Number==1){
+    x_y=t(matrix(
+      base::rep(c(res@RowxNumber),each=ncol(fun_mat)),
+      nrow=ncol(fun_mat))
+    ) * matrix(
+      base::rep(c(res@NumberxCol),each=nrow(fun_mat)),
+      nrow=nrow(fun_mat)
+    )
+  }
+  if(res@Number>1){
+    for( i in 1:res@Number){
+      xy=t(matrix(
+        base::rep(res@RowxNumber[,i],each=ncol(fun_mat)),
+        nrow=ncol(fun_mat)
+      )) * matrix(
+        base::rep(res@NumberxCol[i,],each=nrow(fun_mat)),
+        nrow=nrow(fun_mat)
+      )
+      xy =xy*i
+      x_y=x_y+xy
+    }
+  }
+  return(x_y)
+}
+
+cell_clust0 <- cell_attributor(array_3d_clr, biclust0[[1]])
+rownames(cell_clust0) <- rownames(array_3d_clr)
+colnames(cell_clust0) <- colnames(array_3d_clr)
+
+cell_clust1 <- cell_attributor(array_3d, biclust1[[1]])
+rownames(cell_clust1) <- rownames(array_3d)
+colnames(cell_clust1) <- colnames(array_3d)
+```
+
+## Bicluster's coverage
+
+```{r}
 funcc_show_bicluster_coverage(array_3d_clr, biclust0)
 funcc_show_bicluster_coverage(array_3d_clr, biclust1)
+```
+
+Many curves located in the same bicluster, a lot of biclusters with only one curve.
+
+## Block matrices
+
+Displaying biclusters as a block matrix
+
+```{r}
+# alternative to funcc_show_block_matrix(array_3d_clr, biclust0) which is ugly
+
+col_palette = c(
+  'black',
+  RColorBrewer::brewer.pal(9, 'Set1'),
+  RColorBrewer::brewer.pal(12, 'Set3'),
+  RColorBrewer::brewer.pal(8, 'Set2'),
+  RColorBrewer::brewer.pal(8, 'Accent'),
+  RColorBrewer::brewer.pal(8, 'Dark2'),
+  RColorBrewer::brewer.pal(9, 'PiYG'),
+  RColorBrewer::brewer.pal(9, 'PuOr'),
+  RColorBrewer::brewer.pal(9, 'RdBu'),
+  RColorBrewer::brewer.pal(9, 'PRGn'),
+  RColorBrewer::brewer.pal(9, 'Pastel1'),
+  RColorBrewer::brewer.pal(8, 'Pastel2'),
+  RColorBrewer::brewer.pal(9, 'BrBG'),
+  RColorBrewer::brewer.pal(11, 'Spectral'),
+  RColorBrewer::brewer.pal(8, 'RdGy'),
+  RColorBrewer::brewer.pal(8, 'RdBu'),
+  RColorBrewer::brewer.pal(8, 'PRGn'),
+  RColorBrewer::brewer.pal(8, 'PiYG'),
+  RColorBrewer::brewer.pal(8, 'Oranges'),
+  RColorBrewer::brewer.pal(8, 'Blues'),
+  RColorBrewer::brewer.pal(8, 'RdGy'),
+  RColorBrewer::brewer.pal(8, 'Greens'),
+  RColorBrewer::brewer.pal(6, 'BuPu'),
+  RColorBrewer::brewer.pal(6, 'BuGn'),
+  RColorBrewer::brewer.pal(9, 'Paired'),
+  RColorBrewer::brewer.pal(9, 'Paired'),
+  RColorBrewer::brewer.pal(9, 'Paired'),
+  RColorBrewer::brewer.pal(9, 'Paired'),
+  RColorBrewer::brewer.pal(9, 'Paired'))
+
+show_cell_clusters <- function(cell_clusters) {
+  print(ggplot(reshape2::melt(cell_clust0),aes(x=Var2,y=Var1)) +
+          geom_raster(aes(fill=as.factor(value))) + 
+          scale_fill_manual(values=col_palette) + 
+          xlab('Columns') + 
+          ylab('Rows') + 
+          labs(fill='Bi-cluster')
+  )
+}
+
+show_cell_clusters(cell_clust0)
+show_cell_clusters(cell_clust1)
+```
+
+## Biculsters' dimensions
+
+```{r}
 funcc_show_bicluster_dimension(array_3d_clr, biclust0)
 funcc_show_bicluster_dimension(array_3d_clr, biclust1)
+```
+
+## Biclusters' H-score versus size
+
+```{r}
 funcc_show_bicluster_hscore(array_3d_clr, biclust1)
 funcc_show_bicluster_hscore(array_3d_clr, biclust0)
-funcc_show_block_matrix(array_3d_clr, biclust0)
-funcc_show_block_matrix(array_3d_clr, biclust1)
+```
+
+## Biclusters' curves and mean
+
+```{r}
 funcc_show_results(array_3d, biclust0)
 funcc_show_results(array_3d, biclust1, only.mean = T)
+```
+
+I don't think it helps visualising well the clusters. I think it would be better to characterize clusters with mean and quantiles using depth measure.
+
+# Get all curves of a bicluster
+
+We can obtain all the curves from a cluster this way:
+
+```{r}
+bicluster_index0 = 26
+stopifnot(0 <= bicluster_index0 & bicluster_index0 <= biclust0[[1]]@Number)
+
+bicluster_curves <- array_3d_clr[biclust0[[1]]@RowxNumber[,bicluster_index0],biclust0[[1]]@NumberxCol[bicluster_index0,],]
+```
+
+# Exporting results
+
+```{r}
+save(biclust1, file = "biclusters.rda")
+save(biclust0, file = "biclusters_clr.rda")
 ```
