@@ -1,0 +1,261 @@
+---
+title: "Rush-hour validation profiles and FunCC biclusters"
+output: html_document
+params:
+  fit_file: "funcc_package_fits0.rds"
+  B_boot: 20
+---
+
+## Research question
+
+We compare regular working days (WD) with working days during school holidays (WDSH) to see whether station entries are more concentrated during the morning rush when schools are in session. This can help flag stations and times where school and work travel may overlap and where to investigate the need for additional security measures. The data show when people enter each station. The framework could be extended if we can identifying who is travelling and assessing crowding would potentially require station-by-station data for entry counts, station capacity, and so on.
+
+## Load the data and saved biclusters
+
+The `fits0` file contains (CLR) fit, and `fits1` contains fit on original percentages. We use original percentages to interpret the results and the fitting scale to run FunCC in the bootstrap.
+
+```{r load-data}
+load("array_3d.rda")
+profiles <- array_3d
+saved_fit <- readRDS(params$fit_file)[[1]]
+delta <- saved_fit$parameter$delta
+
+if (delta == 0.5) {
+  load("array_3d_clr.rda") 
+  fit_profiles <- array_3d_clr
+  } else if (delta == 4.25) {
+  fit_profiles <- profiles
+} else {
+  stop("Expected one of the two saved project fits.")
+}
+
+stopifnot(identical(dimnames(profiles), dimnames(fit_profiles)))
+
+get_blocks <- function(fit, data) {
+  b <- fit[[1]]
+  if (b@Number == 0L) return(list())
+
+  stopifnot(nrow(b@RowxNumber) == dim(data)[1],
+            ncol(b@NumberxCol) == dim(data)[2])
+
+  blocks <- lapply(seq_len(b@Number), function(k) {
+    data[which(b@RowxNumber[, k]), which(b@NumberxCol[k, ]), ,
+         drop = FALSE]
+  })
+  names(blocks) <- paste0("B", seq_along(blocks))
+  blocks
+  # Return one hourly data array per bicluster using the station and day-type memberships in the fit.
+}
+
+blocks <- get_blocks(saved_fit, profiles)
+ids <- dimnames(profiles)[[1]]
+day_sets <- lapply(blocks, function(b) dimnames(b)[[2]])
+
+knitr::kable(data.frame(
+  Bicluster = names(blocks),
+  Stations = vapply(blocks, nrow, integer(1)),
+  Day_types = vapply(day_sets, paste, character(1), collapse = ", ")
+))
+```
+
+## Station shortlist
+
+Rank stations by the share of regular-working-day (`WD`) entries in two screening windows, 07:00–10:00 and 16:00–19:00. The bicluster column shows which saved groups include the station's WD profile.
+
+```{r shortlist}
+stations <- read.csv("stations.csv")
+wd_blocks <- Filter(function(b) "WD" %in% dimnames(b)[[2]], blocks)
+
+wd_membership <- vapply(ids, function(id) {
+  included <- vapply(wd_blocks, function(b) {
+    id %in% dimnames(b)[[1]]
+  }, logical(1))
+  if (any(included)) paste(names(wd_blocks)[included], collapse = ", ")
+  else "Unassigned"
+}, character(1))
+
+shortlist <- function(hours) {
+  share <- rowSums(profiles[, "WD", as.character(hours)])
+  top <- head(order(-share, ids), 15L)
+  data.frame(
+    Station_ID = ids[top],
+    Station = stations$station_name[match(ids[top], stations$station_id)],
+    Share_pct = round(share[top], 2),
+    WD_biclusters = wd_membership[top],
+    row.names = NULL
+  )
+}
+```
+
+### Morning
+
+```{r morning}
+knitr::kable(shortlist(7:9))
+```
+
+### Evening
+
+```{r evening}
+knitr::kable(shortlist(16:18))
+```
+
+## 1. Paired sign test (Lab 03)
+
+At each station, compare the share of validations from 07:00 to 10:00 on regular working days and school-holiday working days (WDSH). Under the null positive and negative differences are expected to be equally likely. The exact sign test excludes ties and assumes independent station signs.
+
+```{r sign-test}
+D <- profiles[, "WD", ] - profiles[, "WDSH", ]
+stopifnot(all(is.finite(D)))
+
+morning_gap <- rowSums(D[, as.character(7:9)])
+positive <- sum(morning_gap > 1e-8)
+negative <- sum(morning_gap < -1e-8)
+ties <- length(morning_gap) - positive - negative
+
+sign_p <- if (positive + negative > 0L) {
+  stats::binom.test(positive, positive + negative, p = 0.5)$p.value
+} else {
+  NA_real_
+}
+
+knitr::kable(data.frame(
+  Stations = length(morning_gap),
+  Higher_on_WD = positive,
+  Higher_on_WDSH = negative,
+  Ties = ties,
+  Median_gap_pp = round(median(morning_gap), 2),
+  P_value = format.pval(sign_p, digits = 3, eps = 0)
+))
+```
+
+For biclusters containing both day types, summarize the same contrast descriptively. Membership was selected using these profiles, so the sign test above uses all stations without selecting by membership.
+
+```{r paired-blocks}
+paired_blocks <- Filter(function(b) {
+  all(c("WD", "WDSH") %in% dimnames(b)[[2]])
+}, blocks)
+
+if (length(paired_blocks)) {
+  summaries <- lapply(names(paired_blocks), function(k) {
+    gap <- morning_gap[dimnames(paired_blocks[[k]])[[1]]]
+    data.frame(Bicluster = k, Stations = length(gap),
+               Median_gap_pp = round(median(gap), 2))
+  })
+  knitr::kable(do.call(rbind, summaries))
+} else {
+  cat("No saved bicluster contains both WD and WDSH.")
+}
+```
+
+## 2. Functional permutation test (Labs 04 and 05)
+
+Compare the full 24-hour WD and WDSH mean curves. One random sign per station swaps its entire pair of curves, preserving the dependence between hours. The null assumes the day-type labels are exchangeable within stations and that swaps can be made independently across stations. The global statistic is the squared distance between the mean curves on the hourly grid.
+
+```{r functional-permutation}
+observed <- colMeans(D)
+B_perm <- 1999L
+
+set.seed(505)
+mean_perm <- replicate(B_perm, {
+  signs <- sample(c(-1, 1), nrow(D), replace = TRUE)
+  colMeans(sweep(D, 1, signs, "*"))
+})
+
+global_observed <- sum(observed^2)
+global_perm <- colSums(mean_perm^2)
+p_global <- (1 + sum(global_perm >= global_observed - 1e-10)) /
+  (B_perm + 1)
+p_global
+```
+
+To flag individual hours, compare each absolute hourly gap with the largest absolute gap from each permutation. This gives the 24 hours a common reference under the joint exchangeability null.
+
+```{r hourly-permutation}
+max_perm <- apply(abs(mean_perm), 2, max)
+p_adjusted <- vapply(abs(observed), function(gap) {
+  (1 + sum(max_perm >= gap - 1e-10)) / (B_perm + 1)
+}, numeric(1))
+
+hour <- as.integer(colnames(D))
+flagged <- p_adjusted <= 0.05
+
+plot(hour, observed, type = "b", xlab = "Hour starting at",
+     ylab = "Mean WD minus WDSH (percentage points)")
+abline(h = 0, lty = 2)
+points(hour[flagged], observed[flagged], pch = 19, col = "firebrick")
+
+knitr::kable(data.frame(
+  Hour = hour,
+  Mean_gap_pp = round(observed, 3),
+  Max_adjusted_p = p_adjusted,
+  Flagged = flagged
+))
+```
+
+## 3. Station bootstrap (Lab 06)
+
+Sample whole stations with replacement and rerun FunCC with the saved settings. Each resampled station brings all of its day types and hours. For each saved bicluster, find the refitted bicluster with the same day types and the greatest station overlap. We use Jaccard similarity, the number of shared stations divided by the number in either group, among stations available in that resample.
+
+Repeated stations count once for overlap and keep their multiplicity when we calculate mean curves. The bootstrap assumes stations are independent sampling units. Twenty draws is a pilot for checking stability. Increase `B_boot` for a more precise summary.
+
+```{r bootstrap, message=FALSE, warning=FALSE}
+reference_means <- lapply(blocks, function(b) {
+  apply(b, MARGIN = c(2, 3), FUN = mean)
+})
+
+bootstrap_once <- function() {
+  draw <- sample.int(length(ids), replace = TRUE)
+  original_ids <- ids[draw]
+  A <- profiles[draw, , , drop = FALSE]
+  fit_data <- fit_profiles[draw, , , drop = FALSE]
+  dimnames(A)[[1]] <- dimnames(fit_data)[[1]] <- as.character(seq_along(draw))
+
+  fit <- do.call(FunCC::funcc_biclust,
+                 c(list(fun_mat = fit_data), as.list(saved_fit$parameter)))
+  boot_blocks <- get_blocks(fit, A)
+
+  vapply(seq_along(blocks), function(k) {
+    days <- day_sets[[k]]
+    target <- intersect(dimnames(blocks[[k]])[[1]], original_ids)
+    candidates <- Filter(function(b) {
+      setequal(dimnames(b)[[2]], days)
+    }, boot_blocks)
+
+    if (!length(target) || !length(candidates)) {
+      return(c(overlap = 0, curve_rmse = NA_real_))
+    }
+
+    overlaps <- vapply(candidates, function(b) {
+      candidate_ids <- original_ids[as.integer(dimnames(b)[[1]])]
+      length(intersect(target, candidate_ids)) /
+        length(union(target, candidate_ids))
+    }, numeric(1))
+
+    best <- which.max(overlaps)
+    if (overlaps[best] == 0) {
+      return(c(overlap = 0, curve_rmse = NA_real_))
+    }
+
+    mean_curve <- apply(candidates[[best]][, days, , drop = FALSE],
+                        c(2, 3), mean)
+    rmse <- sqrt(mean((mean_curve - reference_means[[k]])^2))
+    c(overlap = overlaps[best], curve_rmse = rmse)
+  }, numeric(2))
+}
+
+B_boot <- params$B_boot
+set.seed(606)
+boot <- replicate(B_boot, bootstrap_once())
+overlap <- matrix(boot[1, , ], nrow = length(blocks))
+curve_rmse <- matrix(boot[2, , ], nrow = length(blocks))
+
+knitr::kable(data.frame(
+  Bicluster = names(blocks),
+  Matched_draws = rowSums(overlap > 0),
+  Total_draws = B_boot,
+  Median_overlap = round(apply(overlap, 1, median), 2),
+  Median_curve_RMSE_pp = round(apply(curve_rmse, 1, median, na.rm = TRUE), 2)
+))
+```
+
+Unmatched draws count as zero overlap. The curve error uses matched draws only and is measured in percentage points. A similar mean curve can recur even when the stations in the group change, so read curve error alongside station overlap and match frequency. \`\`\`\`
