@@ -120,6 +120,8 @@ We choose $\theta=\theta_{CLR}=2.3$.
 
 biclust0 <- funcc_biclust(array_3d_clr, delta = .5, theta = 2.3)
 biclust1 <- funcc_biclust(array_3d, delta = 4.25, theta = 2.3)
+saveRDS(list(clr = biclust0, original = biclust0), "funcc_package_fits0.rds")
+saveRDS(list(clr = biclust1, original = biclust1), "funcc_package_fits1.rds")
 ```
 
 # Inspection
