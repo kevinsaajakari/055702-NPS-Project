@@ -42,16 +42,18 @@ We believe that our data set is suitable to answer the following research questi
 
 After eventually applying the Centred Log Ratio transform:
 
-1.  Functional nonparametric biclustering using `FunCC`
+1.  Functional nonparametric biclustering using `FunCC` to identify groups of stations and day types sharing similar hourly passenger entry patterns.
 
-2.  Investigating biclusters using depth measure and their differences using permutational inference
+2.  Reducing the number of biclusters and identifying outlier biclusters by trying to merge them using permutational inference in order to simplify the structure to make it more actionable.
 
-3.  Comparing results with data from another year or another semester
+3.  Investigating biclusters quantiles using depth measure for profiling typical curves to gain information of the within-bicluster variation.
 
-4.  Regression over local station parameters (e.g.: number of people working or living close) using nonparametric regression and prediction for a new station using conformal prediction
+Possible extentions: 
+- Comparing results with data from another year or another semester
+- Regression over local station parameters (e.g.: number of people working or living close) using nonparametric regression and prediction for a new station using conformal prediction
 
 ### Sources
 
-[1] [IDFM's Website](https://www.iledefrance-mobilites.fr/decouvrir/nos-missions){.uri}
+[1] [IDFM's Website](https://www.iledefrance-mobilites.fr/decouvrir/nos-missions)
 
 [2] [IDFM Open Data](https://data.iledefrance-mobilites.fr/explore/dataset/validations-reseau-ferre-profils-horaires-par-jour-type-2eme-trimestre/table/?sort=-code_stif_arret)
