@@ -28,7 +28,7 @@ Given station $s \in S$, day type $d \in D$ and $t \in \{0,\dots,23\}$, the rela
 
 ### Research Question
 
-Supposing that
+Assuming that
 
 - The relative number of validations is representative of the relative number of travellers entering a station
 
