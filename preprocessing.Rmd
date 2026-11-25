@@ -246,6 +246,21 @@ data <- data %>% complete(
 )
 ```
 
+Checking normalisation
+
+```{r}
+data %>% group_by(station_id, day_cat) %>% summarise(tot = sum(percentage_entering)) %>% ggplot(data = ., aes(tot)) + geom_bar()
+```
+
+We renormalise it
+
+```{r}
+data_with_zeros <- data %>%
+  group_by(station_id, day_cat) %>%
+  mutate(percentage_entering = 100 * percentage_entering / sum(percentage_entering)) %>%
+  ungroup()
+```
+
 Checking zero values
 
 ```{r}
@@ -259,28 +274,26 @@ data %>% group_by(time_slot) %>% summarize(zero_freq = mean(percentage_entering 
 There is no clear cut-off, we transform all zero values in near-zero values
 
 ```{r}
-data <- data %>% mutate(percentage_entering = ifelse(percentage_entering == 0, 0.01, percentage_entering))
+data_no_zeros <- data %>% mutate(percentage_entering = ifelse(percentage_entering == 0, 0.01, percentage_entering))
 ```
 
 We check normalization
 
 ```{r}
-data %>% group_by(station_id, day_cat) %>% summarise(tot = sum(percentage_entering)) %>% ggplot(data = ., aes(tot)) + geom_bar()
+data_no_zeros %>% group_by(station_id, day_cat) %>% summarise(tot = sum(percentage_entering)) %>% ggplot(aes(tot)) + geom_bar()
 ```
 
 ```{r}
-data %>% group_by(station_id, day_cat) %>% summarise(error = (sum(percentage_entering)-100)/0.01)
+data_no_zeros %>% group_by(station_id, day_cat) %>% summarise(error = (sum(percentage_entering)-100)/0.01)
 ```
 
-```{r}
-normalise <- function(vec){
-  error <- round((sum(vec) - 100) * 100)
-  nb_changes <- abs(error)
-  sgn <- sign(error)
-  return(vec - sgn * 0.01 * rmultinom(1, nb_changes, prob = vec * (100 - vec)))
-}
+We renormalise it
 
-data <- data %>% group_by(station_id, day_cat) %>% mutate(percentage_entering = normalise(percentage_entering)) %>% ungroup()
+```{r}
+data_no_zeros <- data_no_zeros %>%
+  group_by(station_id, day_cat) %>%
+  mutate(percentage_entering = 100 * percentage_entering / sum(percentage_entering)) %>%
+  ungroup()
 ```
 
 # Creating useful data containers
@@ -288,7 +301,7 @@ data <- data %>% group_by(station_id, day_cat) %>% mutate(percentage_entering = 
 3D array with rows as stations, columns as day types and cells (or depth) as the hourly distribution
 
 ```{r}
-array_3d <- data %>% select(
+array_3d <- data_with_zeros %>% select(
   station_id, 
   day_cat, 
   time_slot,
@@ -306,7 +319,20 @@ array_3d <- data %>% select(
 3D array with Centred Log Ratio Transformation applied
 
 ```{r}
-array_3d_clr <- aperm(apply(array_3d, c(1, 2), clr), c(2, 3, 1))
+array_3d_no_zeros <- data_no_zeros %>% select(
+  station_id, 
+  day_cat, 
+  time_slot,
+  percentage_entering
+) %>% pivot_wider(
+  names_from = day_cat, 
+  values_from = percentage_entering
+) %>% {split(.[setdiff(names(.), "time_slot")], .$time_slot)} %>% 
+  map(~ .x %>% 
+        column_to_rownames('station_id') %>% 
+        as.matrix) %>% 
+  simplify2array
+array_3d_clr <- aperm(apply(array_3d_no_zeros, c(1, 2), clr), c(2, 3, 1))
 ```
 
 Tibble with station information
