@@ -1,0 +1,552 @@
+---
+title: "FunCC on CLR profiles and bicluster-specific depth"
+subtitle: "Île-de-France rail network - hourly validation profiles by day type"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: show
+    df_print: paged
+    theme: flatly
+    highlight: tango
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 8,
+  fig.height = 4.8,
+  fig.align = "center",
+  dpi = 110
+)
+```
+
+```{css, echo=FALSE}
+.note {
+  padding: 0.6em 1em;
+  margin: 0.8em 0;
+  border-radius: 5px;
+  background: #f4f7fb;
+  border-left: 5px solid #2563eb;
+}
+```
+
+# Setup
+
+```{r packages}
+library(roahd)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+theme_set(theme_minimal(base_size = 11))
+set.seed(55702)
+```
+
+## FunCC functions (loaded unchanged)
+
+The FunCC functions are read from `biClustering_with_funCC.Rmd` **without
+modifying that file**: we take its R chunks and evaluate only the function
+definitions.
+
+```{r load-funcc}
+load_function_defs <- function(rmd) {
+  lines  <- readLines(rmd, encoding = "UTF-8", warn = FALSE)
+  starts <- which(startsWith(lines, "```{r"))
+  ends   <- which(trimws(lines) == "```")
+  code <- unlist(lapply(starts, function(s) {
+    e <- ends[ends > s][1]
+    if (e > s + 1) lines[(s + 1):(e - 1)] else character(0)
+  }))
+  is_fun_def <- function(e) {
+    is.call(e) &&
+      (identical(e[[1]], as.name("<-")) || identical(e[[1]], as.name("="))) &&
+      is.call(e[[3]]) && identical(e[[3]][[1]], as.name("function"))
+  }
+  env <- new.env()
+  for (e in Filter(is_fun_def, as.list(parse(text = code)))) eval(e, envir = env)
+  env
+}
+
+funcc <- load_function_defs("biClustering_with_funCC.Rmd")
+ls(funcc)
+```
+
+## Data
+
+```{r data}
+load("array_3d_clr_service.rda")   # CLR on service hours (preprocessing.Rmd)
+stations <- read.csv("stations.csv")
+
+Z <- array_3d_clr_service          # stations x day types x hours (CLR)
+hours <- as.integer(hours_service)
+days  <- dimnames(Z)[[2]]
+ids   <- dimnames(Z)[[1]]
+
+# inverse CLR: back to shares (%) on the original scale
+clr_inv <- function(z, total = 100) total * exp(z) / sum(exp(z))
+S <- aperm(apply(Z, c(1, 2), clr_inv), c(2, 3, 1))
+dimnames(S) <- dimnames(Z)
+stopifnot(isTRUE(all.equal(S, array_3d_service)))   # inverse recovers the data
+
+network_of <- function(id) {
+  prefix <- sub("_[^_]+$", "", id)
+  case_when(prefix == "100_110"       ~ "Metro",
+            startsWith(prefix, "810") ~ "RER (RATP)",
+            startsWith(prefix, "800") ~ "SNCF rail",
+            TRUE                      ~ "Other")
+}
+
+station_info <- data.frame(station_id = ids) |>
+  left_join(stations, by = "station_id") |>
+  mutate(network = network_of(station_id),
+         am_pm_WD = log(rowSums(S[, "WD", c("7", "8")]) /
+                        rowSums(S[, "WD", c("17", "18")])))
+name_of <- function(id) station_info$station_name[match(id, station_info$station_id)]
+
+dim(Z)
+```
+
+# FunCC on CLR curves
+
+The notebook's `run_funCC()` is not finished yet. We follow the logic of the
+FunCC package (`funcc_biclust`), which works on **station × day-type
+cells** (the exact window search of the package is not reproduced):
+
+1. keep a matrix of cells already covered by a bicluster;
+2. for each combination of at least two day types, build the **maximal**
+   window of stations whose cells are all uncovered on those day types
+   (one window per combination, at least `min_rows` stations);
+3. evaluate these windows in descending order of size: run the notebook's
+   `refine_bicluster()` (which shrinks the window) and keep the first result
+   with at least `min_rows` stations and $H \le \delta$;
+4. mark its cells as covered and repeat; stop when **no** window gives an
+   acceptable bicluster.
+
+A station can appear in several biclusters with different day types, but
+no cell is used twice. $\delta = 0.2\,H_{\text{full}}$ and $\theta = 1.3$ as
+in the notebook's own test. `min_rows = 10` is our choice (the package
+allows 2): smaller groups are too small for depth-based tools.
+
+```{r funcc-run}
+H_full   <- funcc$get_scores(Z)$H
+theta    <- 1.3
+min_rows <- 10
+
+col_sets <- unlist(lapply(2:length(days), function(k)
+  combn(days, k, simplify = FALSE)), recursive = FALSE)
+
+candidate_windows <- function(covered) {
+  wins <- lapply(col_sets, function(cs) list(
+    rows = rownames(covered)[rowSums(covered[, cs, drop = FALSE]) == 0],
+    cols = cs))
+  wins <- Filter(function(w) length(w$rows) >= min_rows, wins)
+  wins[order(-sapply(wins, function(w) length(w$rows) * length(w$cols)))]
+}
+
+run_funcc_cells <- function(Z, delta, max_bic = 30) {
+  covered <- matrix(FALSE, dim(Z)[1], dim(Z)[2], dimnames = dimnames(Z)[1:2])
+  bics <- list()
+  n_errors <- 0
+  repeat {
+    if (length(bics) >= max_bic) break
+    found <- FALSE
+    for (w in candidate_windows(covered)) {
+      b <- tryCatch(funcc$refine_bicluster(Z[w$rows, w$cols, , drop = FALSE],
+                                           delta, theta),
+                    error = function(e) {
+                      message("FunCC refinement error: ", conditionMessage(e))
+                      n_errors <<- n_errors + 1
+                      NULL
+                    })
+      if (is.null(b) || dim(b)[1] < min_rows || dim(b)[2] < 2) next
+      Hb <- funcc$get_scores(b)$H
+      if (Hb > delta) next
+      bics[[paste0("B", length(bics) + 1)]] <-
+        list(rows = dimnames(b)[[1]], cols = dimnames(b)[[2]], H = Hb)
+      covered[dimnames(b)[[1]], dimnames(b)[[2]]] <- TRUE
+      found <- TRUE
+      break
+    }
+    if (!found) break
+  }
+  list(biclusters = bics, covered = covered, n_errors = n_errors,
+       hit_max_bic = length(bics) >= max_bic)
+}
+
+delta <- 0.2 * H_full
+fit <- run_funcc_cells(Z, delta)
+biclusters <- fit$biclusters
+covered    <- fit$covered
+
+c(H_full = round(H_full, 3), delta = round(delta, 3),
+  refinement_errors = fit$n_errors, hit_max_bic = fit$hit_max_bic)
+
+bic_table <- data.frame(
+  bicluster = names(biclusters),
+  stations  = sapply(biclusters, function(b) length(b$rows)),
+  day_types = sapply(biclusters, function(b) paste(b$cols, collapse = ", ")),
+  H = round(sapply(biclusters, function(b) b$H), 3)
+)
+bic_table
+
+c(covered_cells = sum(covered), all_cells = length(covered),
+  stations_in_several_biclusters =
+    sum(table(unlist(lapply(biclusters, `[[`, "rows"))) > 1))
+colSums(covered)
+```
+
+```{r membership}
+lapply(names(biclusters), function(k) {
+  station_info |>
+    filter(station_id %in% biclusters[[k]]$rows) |>
+    summarise(bicluster = k, n = n(),
+              Metro = sum(network == "Metro"),
+              RER = sum(network == "RER (RATP)"),
+              SNCF = sum(network == "SNCF rail"),
+              Other = sum(network == "Other"),
+              median_am_pm_WD = round(median(am_pm_WD), 2))
+}) |> bind_rows()
+```
+
+<div class="note">
+FunCC finds `r length(biclusters)` biclusters and covers
+`r round(100 * mean(covered))`% of the station × day-type cells.
+**B1** is the large mainstream group (almost all Metro and RER stations,
+plus part of SNCF) on working days and weekends. **B2** is a group of
+**residential SNCF stations** on working days (with and without school
+holidays). **B3** collects the weekend profiles (Saturday and Sunday) of
+suburban SNCF stations left out of B1;
+`r sum(biclusters$B3$rows %in% biclusters$B2$rows)` of its
+`r length(biclusters$B3$rows)` stations are also in B2, now with their
+weekend days. **B4** is a small group on Saturdays (with and without school
+holidays).
+</div>
+
+## Sensitivity to δ
+
+The same procedure is repeated for several $\delta / H_{\text{full}}$ ratios.
+Stability of B2 and B3 is measured as the best cell-level Jaccard overlap
+between the reference bicluster and any bicluster found at that ratio.
+
+```{r delta-sensitivity}
+cells_of <- function(b) as.vector(outer(b$rows, b$cols, paste, sep = "|"))
+best_jaccard <- function(ref, bics) {
+  rc <- cells_of(ref)
+  max(sapply(bics, function(b) {
+    bc <- cells_of(b)
+    length(intersect(rc, bc)) / length(union(rc, bc))
+  }))
+}
+
+ratios <- c(0.10, 0.15, 0.20, 0.25, 0.30)
+delta_fits <- lapply(ratios, function(r) {
+  if (r == 0.2) fit else run_funcc_cells(Z, r * H_full)
+})
+
+data.frame(
+  delta_ratio = ratios,
+  biclusters = sapply(delta_fits, function(f) length(f$biclusters)),
+  coverage_pct = sapply(delta_fits, function(f) round(100 * mean(f$covered), 1)),
+  largest = sapply(delta_fits, function(f) {
+    b <- f$biclusters[[which.max(sapply(f$biclusters, function(x)
+      length(x$rows) * length(x$cols)))]]
+    sprintf("%d x %d", length(b$rows), length(b$cols))
+  }),
+  jaccard_B2 = sapply(delta_fits, function(f)
+    round(best_jaccard(biclusters$B2, f$biclusters), 2)),
+  jaccard_B3 = sapply(delta_fits, function(f)
+    round(best_jaccard(biclusters$B3, f$biclusters), 2)),
+  errors = sapply(delta_fits, `[[`, "n_errors"),
+  hit_max_bic = sapply(delta_fits, `[[`, "hit_max_bic")
+)
+```
+
+<div class="note">
+The **overall structure is stable**: a dominant mainstream bicluster, a
+working-day group of residential suburban stations (B2-like) and a weekend
+group (B3-like) appear at every ratio. The **details are not**. For larger
+$\delta$, B2 is fairly stable (Jaccard 0.6-0.8) and the main bicluster also
+absorbs WDSH (coverage above 90%). For smaller $\delta$, the minor groups
+split into several pieces (Jaccard 0.2-0.5). B3 is less stable than B2.
+Conclusions about B2 and B3 should therefore stay at the level of "type of
+station", not exact membership.
+</div>
+
+# Bicluster-specific depth
+
+From here on, each bicluster is analysed **with its own stations and its
+own day types**, as in Lab 2. Depths are computed on **CLR** curves; results
+are shown back on the **share scale** with the inverse CLR. Curves are
+back-transformed one by one (a CLR envelope is not a composition), and the
+central region is the pointwise range of the back-transformed deepest 50%.
+
+```{r bicluster-objects}
+bic_fd <- lapply(biclusters, function(b) {
+  setNames(lapply(b$cols, function(d) fData(hours, Z[b$rows, d, ])), b$cols)
+})
+bic_mfd <- lapply(biclusters, function(b) {
+  mfData(hours, lapply(b$cols, function(d) Z[b$rows, d, ]))
+})
+n_panels <- sum(sapply(biclusters, function(b) length(b$cols)))
+```
+
+## BD vs MBD inside each bicluster
+
+```{r bd-mbd}
+lapply(names(biclusters), function(k) {
+  lapply(names(bic_fd[[k]]), function(d) {
+    f <- bic_fd[[k]][[d]]
+    data.frame(bicluster = k, day = d, N = f$N,
+               distinct_BD = length(unique(BD(f))),
+               distinct_MBD = length(unique(MBD(f)))) |>
+      mutate(MBD_all_distinct = distinct_MBD == N)
+  }) |> bind_rows()
+}) |> bind_rows()
+```
+
+<div class="note">
+Inside every bicluster, as on the full data, **BD is constant** (one value).
+MBD gives every curve its own value except in one case (B4, SA: one tie
+among 11 curves). MBD is used below.
+</div>
+
+## Bicluster medians and central regions
+
+The **bicluster median** is the station with the highest `multiMBD` over
+the bicluster's day types.
+
+```{r bicluster-medians}
+bic_median <- sapply(names(biclusters), function(k) {
+  biclusters[[k]]$rows[which.max(multiMBD(bic_mfd[[k]], weights = "uniform"))]
+})
+
+data.frame(bicluster = names(bic_median),
+           median_station = name_of(bic_median),
+           network = station_info$network[match(bic_median, station_info$station_id)])
+```
+
+```{r bicluster-regions, fig.width=10, fig.height=2.6 * length(biclusters) + 0.8}
+region_df <- lapply(names(biclusters), function(k) {
+  b <- biclusters[[k]]
+  lapply(b$cols, function(d) {
+    m <- MBD(bic_fd[[k]][[d]])
+    central <- b$rows[m >= median(m)]          # deepest 50%
+    data.frame(bicluster = k, day = d, hour = hours,
+               lower = apply(S[central, d, ], 2, min),
+               upper = apply(S[central, d, ], 2, max),
+               median_share = S[bic_median[[k]], d, ])
+  }) |> bind_rows()
+}) |> bind_rows() |>
+  mutate(day = factor(day, levels = days))
+
+ggplot(region_df, aes(hour)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper, fill = bicluster), alpha = 0.3) +
+  geom_line(aes(y = median_share, colour = bicluster), linewidth = 1) +
+  facet_grid(bicluster ~ day) +
+  scale_fill_brewer(palette = "Set1", guide = "none") +
+  scale_colour_brewer(palette = "Set1", guide = "none") +
+  labs(x = "Hour", y = "Share (%)",
+       title = "Bicluster median (line) and 50% central region (band)")
+```
+
+<div class="note">
+**B1** (median: `r name_of(bic_median[[1]])`): double commuter peak on
+working days, flat broad profile on weekends.
+**B2** (median: `r name_of(bic_median[[2]])`): an extreme **7h peak** (over a
+quarter of the day's entries) and a weak evening, on WD and WDSH.
+**B3** (median: `r name_of(bic_median[[3]])`): Saturday entries spread over
+the late morning, Sunday entries peaking at 17h (possibly return trips);
+profiles are more jagged than in B1, possibly because of lower volumes
+(the shares alone cannot show this).
+**B4** (median: `r name_of(bic_median[[4]])`): Saturday profiles of a few
+SNCF stations, with a morning plateau; very jagged (11 stations).
+</div>
+
+## Functional boxplots inside each bicluster
+
+```{r bicluster-fbplots, fig.width=10, fig.height=3.2 * ceiling(n_panels / 3)}
+old_par <- par(mfrow = c(ceiling(n_panels / 3), 3), mar = c(4, 4, 3, 1))
+bic_fb <- list()
+for (k in names(biclusters)) {
+  for (d in biclusters[[k]]$cols) {
+    bic_fb[[k]][[d]] <- fbplot(bic_fd[[k]][[d]], main = paste(k, "-", d),
+                               xlab = "Hour", ylab = "CLR")
+  }
+}
+par(old_par)
+
+lapply(bic_fb, function(x) sapply(x, function(fb) length(fb$ID_out)))
+```
+
+<div class="note">
+B1 has almost no magnitude outliers (none on WD): FunCC already left the
+extreme stations out of it. The smaller biclusters have a few. In B3,
+**Plaine Stade de France** stands out on Saturdays with almost 40% of its
+entries at 23h, which is **potentially event-driven** (it is next to the
+stadium); an event calendar would be needed to confirm it.
+</div>
+
+## Outliergram inside each bicluster
+
+The outliergram is applied to **every day type** of every bicluster.
+
+```{r bicluster-outliergram}
+bic_og <- lapply(names(biclusters), function(k) {
+  lapply(bic_fd[[k]], function(f) outliergram(f, display = FALSE))
+})
+names(bic_og) <- names(biclusters)
+
+lapply(bic_og, function(x) sapply(x, function(og) length(og$ID_outliers)))
+```
+
+```{r bicluster-outlier-table}
+outlier_tbl <- lapply(names(biclusters), function(k) {
+  rows <- biclusters[[k]]$rows
+  lapply(biclusters[[k]]$cols, function(d) {
+    fb_ids <- bic_fb[[k]][[d]]$ID_out
+    og_ids <- bic_og[[k]][[d]]$ID_outliers
+    ids_k  <- union(fb_ids, og_ids)
+    if (length(ids_k) == 0) return(NULL)
+    data.frame(
+      bicluster = k, day = d, station_id = rows[ids_k],
+      station = name_of(rows[ids_k]),
+      fbplot = ids_k %in% fb_ids,
+      outliergram = ids_k %in% og_ids,
+      peak_hour = hours[apply(S[rows[ids_k], d, , drop = FALSE], 1, which.max)],
+      peak_share = round(apply(S[rows[ids_k], d, , drop = FALSE], 1, max), 1)
+    )
+  }) |> bind_rows()
+}) |> bind_rows()
+rownames(outlier_tbl) <- NULL
+
+outlier_tbl |> filter(outliergram) |> select(-station_id)
+```
+
+```{r bicluster-outlier-plot, fig.width=10, fig.height=5}
+og_flags <- outlier_tbl |> filter(outliergram)
+
+if (nrow(og_flags) > 0) lapply(seq_len(nrow(og_flags)), function(i) {
+  data.frame(panel = paste(og_flags$bicluster[i], "-", og_flags$day[i]),
+             station = og_flags$station[i], hour = hours,
+             share = S[og_flags$station_id[i], og_flags$day[i], ])
+}) |> bind_rows() |>
+  ggplot(aes(hour, share, group = station)) +
+  geom_line(data = region_df |>
+              mutate(panel = paste(bicluster, "-", day)) |>
+              filter(panel %in% paste(og_flags$bicluster, "-", og_flags$day)),
+            aes(hour, median_share, group = NULL), colour = "black",
+            linewidth = 1) +
+  geom_line(colour = "#c0392b", alpha = 0.8) +
+  facet_wrap(~panel) +
+  labs(x = "Hour", y = "Share (%)",
+       title = "Shape outliers (red) vs bicluster median (black)")
+```
+
+<div class="note">
+Almost all shape outliers are in **B2**, and the same stations are flagged on
+both WD and WDSH: they have an **evening peak** (e.g. Stade de France, Gare
+de l'Est, Nanterre Université), i.e. destination-type stations inside a
+residential bicluster that FunCC's additive model did not separate. In B3
+and B4 a single station each (Presles on Sundays, Provins on Saturdays) has
+a later peak than its bicluster. These stations are candidates for
+reassignment, not for removal.
+</div>
+
+## Functional Spearman between day types inside each bicluster
+
+```{r bicluster-spearman}
+lapply(names(biclusters), function(k) {
+  round(cor(sapply(bic_fd[[k]], MEI)), 2)
+}) |> setNames(names(biclusters))
+
+# check against roahd for the first pair of the first bicluster
+k1 <- names(biclusters)[1]; d12 <- biclusters[[k1]]$cols[1:2]
+c(manual = cor(MEI(bic_fd[[k1]][[d12[1]]]), MEI(bic_fd[[k1]][[d12[2]]])),
+  roahd  = cor_spearman(as.mfData(list(bic_fd[[k1]][[d12[1]]],
+                                       bic_fd[[k1]][[d12[2]]])),
+                        ordering = "MEI"))
+```
+
+<div class="note">
+In B1, rankings are very similar across weekend day types (≈ 0.85-0.88)
+and less similar between WD and weekends (≈ 0.6-0.7). WD and WDSH agree
+strongly in B2 (0.87); the weekend day types agree strongly in B3 (0.93)
+and B4 (0.97).
+These are associations, not tests.
+</div>
+
+## Comparing biclusters: DD-plot
+
+B1 and B2 are compared on working days, the day type they share.
+
+```{r bicluster-ddplot, fig.width=5.5, fig.height=5}
+r1 <- biclusters$B1$rows; r2 <- biclusters$B2$rows
+pooled <- rbind(Z[r1, "WD", ], Z[r2, "WD", ])
+data.frame(
+  depth_wrt_B1 = MBD_relative(pooled, Z[r1, "WD", ]),
+  depth_wrt_B2 = MBD_relative(pooled, Z[r2, "WD", ]),
+  group = rep(c("B1", "B2"), c(length(r1), length(r2)))
+) |>
+  ggplot(aes(depth_wrt_B1, depth_wrt_B2, colour = group)) +
+  geom_abline(slope = 1, intercept = 0, colour = "grey50") +
+  geom_point(size = 1, alpha = 0.7) +
+  coord_equal() +
+  scale_colour_brewer(palette = "Set1") +
+  labs(x = "MBD w.r.t. B1", y = "MBD w.r.t. B2", colour = NULL,
+       title = "DD-plot of WD curves: B1 vs B2")
+```
+
+<div class="note">
+B2 stations lie well above the diagonal (deep in B2, shallow in B1): the
+two biclusters have different working-day profiles. Some B1 stations also
+lie above the diagonal, so **B1 contains B2-like stations**: on working days
+B1 is heterogeneous, which a smaller $\delta$ might split. Exploratory, not
+a test.
+</div>
+
+# Uncovered cells
+
+```{r uncovered}
+colSums(!covered)          # uncovered station x day-type cells per day type
+
+fb_all_wd <- ids[fbplot(fData(hours, Z[, "WD", ]), display = FALSE)$ID_out]
+wd_uncovered <- ids[!covered[, "WD"]]
+
+c(WD_cells_uncovered = length(wd_uncovered),
+  global_WD_fbplot_flags = length(fb_all_wd),
+  flagged_and_uncovered = sum(fb_all_wd %in% wd_uncovered))
+```
+
+<div class="note">
+Most WDSH cells stay uncovered: once B1 has used the other day types of
+its stations, WDSH alone cannot form a bicluster (at least 2 day types are
+required). On working days,
+`r sum(fb_all_wd %in% wd_uncovered)` of the `r length(fb_all_wd)` stations
+flagged by the global WD functional boxplot are not covered by any
+bicluster: **FunCC and depth agree** on which stations are atypical.
+</div>
+
+# Summary
+
+```{r summary-table}
+data.frame(
+  bicluster = names(biclusters),
+  stations = sapply(biclusters, function(b) length(b$rows)),
+  day_types = sapply(biclusters, function(b) paste(b$cols, collapse = ", ")),
+  median_station = name_of(bic_median),
+  fbplot_flags = sapply(names(biclusters), function(k)
+    sum(outlier_tbl$bicluster == k & outlier_tbl$fbplot)),
+  outliergram_flags = sapply(names(biclusters), function(k)
+    sum(outlier_tbl$bicluster == k & outlier_tbl$outliergram))
+)
+```
+
+```{r session-info}
+sessionInfo()
+```
