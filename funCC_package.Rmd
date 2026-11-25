@@ -4,32 +4,34 @@ output: html_document
 ---
 
 ```{r}
-# invisible(suppressMessages(suppressWarnings(lapply(c("gsl","fBasics","stringr","stringi","Rmpfr"), require, character.only = TRUE))))
-# invisible(suppressMessages(suppressWarnings(lapply(names(sessionInfo()$loadedOnly), require, character.only = TRUE))))
-# sessionInfo()
-# invisible(lapply(paste0('package:', names(sessionInfo()$otherPkgs)), detach, character.only=TRUE,unload=TRUE))
+invisible(suppressMessages(suppressWarnings(lapply(c("gsl","fBasics","stringr","stringi","Rmpfr"), require, character.only = TRUE))))
+invisible(suppressMessages(suppressWarnings(lapply(names(sessionInfo()$loadedOnly), require, character.only = TRUE))))
+sessionInfo()
+invisible(lapply(paste0('package:', names(sessionInfo()$otherPkgs)), detach, character.only=TRUE,unload=TRUE))
 
-# bspkgs.nb<-sessionInfo()$basePkgs[sessionInfo()$basePkgs!="base"]
-# bspkgs.nbu<-bspkgs.nb[bspkgs.nb!="utils"]
-# names(bspkgs.nbu)<-bspkgs.nbu
-# suppressMessages(invisible(lapply(paste0('package:', names(bspkgs.nbu)), detach, character.only=TRUE,unload=TRUE)))
+bspkgs.nb<-sessionInfo()$basePkgs[sessionInfo()$basePkgs!="base"]
+bspkgs.nbu<-bspkgs.nb[bspkgs.nb!="utils"]
+names(bspkgs.nbu)<-bspkgs.nbu
+suppressMessages(invisible(lapply(paste0('package:', names(bspkgs.nbu)), detach, character.only=TRUE,unload=TRUE)))
 ```
 
 # Loading package
 
+If asked, do not restart R.
+
 ```{r}
-# install.packages(c("glue", "cli", "cpp11", "Rcpp", "vctrs", "stringi", "magrittr", "withr", "S7", "ggplot2", "purrr", "dplyr", "colorspace", "devtools"))
+install.packages(c("glue", "cli", "cpp11", "Rcpp", "vctrs", "stringi", "magrittr", "withr", "S7", "ggplot2", "purrr", "dplyr", "colorspace", "devtools"))
 
-# library(devtools)
+library(devtools)
 
-# pak::pak('Biclustering/biclust')
-# pak::pak('mrtgalvani/FunCC')
+pak::pak('Biclustering/biclust')
+pak::pak('mrtgalvani/FunCC')
 ```
 
 From here restart R (Session -\> Restart R or `Ctrl+Maj+F10`).
 
 ```{r}
-library("FunCC")
+library(FunCC)
 library(biclust)
 library(grDevices)
 library(tidyverse)
@@ -46,10 +48,9 @@ load("array_3d.rda")
 # Selecting value for $\delta$
 
 ```{r}
-options(warn=-1)
-res0 <- find_best_delta(array_3d_clr, delta_min = 0.01, delta_max = 1, num_delta = 20)
-res1 <- find_best_delta(array_3d, delta_min = 1, delta_max = 8, num_delta = 20)
-options(warn=0)
+invisible(suppressMessages(suppressWarnings(res0 <- find_best_delta(array_3d_clr, delta_min = 0.01, delta_max = 1, num_delta = 20))))
+
+invisible(suppressMessages(suppressWarnings(res1 <- find_best_delta(array_3d, delta_min = 1, delta_max = 8, num_delta = 20))))
 ```
 
 Adding metrics
@@ -90,7 +91,12 @@ plot(res1$delta, res1$Htot_sum, type = "o", log = "")
 plot(res0$delta, res0$Htot_sum, type = "o", log = "")
 ```
 
-We take $\delta=4.25$ and $\delta_{CLR}=0.5$.
+We take $\delta=4.25$ and $\delta_{CLR}=0.4$.
+
+```{r}
+delta = 4.25
+delta_clr = .4
+```
 
 # Selection of $\theta$
 
@@ -99,27 +105,33 @@ thetas <- tibble(theta = seq(from = 1, to = 3, length.out = 10))
 n_rep <- 5
 
 res_theta0 <- thetas %>%
-  mutate(time = sapply(thetas$theta, function(x)system.time(replicate(n = n_rep, expr = {funcc_biclust(array_3d_clr, delta = .5, theta = x)}))[[1]] / n_rep))
+  mutate(time = sapply(thetas$theta, function(x)system.time(replicate(n = n_rep, expr = {funcc_biclust(array_3d_clr, delta = delta_clr, theta = x)}))[[1]] / n_rep))
 
 res_theta1 <- thetas %>%
-  mutate(time = sapply(thetas$theta, function(x)system.time(replicate(n = n_rep, expr = {funcc_biclust(array_3d, delta = 4.25, theta = x)}))[[1]] / n_rep))
+  mutate(time = sapply(thetas$theta, function(x)system.time(replicate(n = n_rep, expr = {funcc_biclust(array_3d, delta = delta, theta = x)}))[[1]] / n_rep))
 ```
 
 Visualisation
 
 ```{r}
+grDevices::dev.new()
 plot(res_theta0, type = "o")
 plot(res_theta1, type = "o")
 ```
 
-We choose $\theta=\theta_{CLR}=2.3$.
+We choose $\theta=2.3$ and $\theta_{CLR}=2.1$.
+
+```{r}
+theta = 2.3
+theta_clr = 2.1
+```
 
 # Computing clusters
 
 ```{r}
 
-biclust0 <- funcc_biclust(array_3d_clr, delta = .5, theta = 2.3)
-biclust1 <- funcc_biclust(array_3d, delta = 4.25, theta = 2.3)
+biclust0 <- funcc_biclust(array_3d_clr, delta = delta_clr, theta = theta_clr)
+biclust1 <- funcc_biclust(array_3d, delta = delta, theta = theta)
 ```
 
 # Inspection
@@ -188,8 +200,9 @@ colnames(cell_clust1) <- colnames(array_3d)
 ## Bicluster's coverage
 
 ```{r}
+grDevices::dev.new()
 funcc_show_bicluster_coverage(array_3d_clr, biclust0)
-funcc_show_bicluster_coverage(array_3d_clr, biclust1)
+funcc_show_bicluster_coverage(array_3d, biclust1)
 ```
 
 Many curves located in the same bicluster, a lot of biclusters with only one curve.
@@ -233,7 +246,7 @@ col_palette = c(
   RColorBrewer::brewer.pal(9, 'Paired'))
 
 show_cell_clusters <- function(cell_clusters) {
-  print(ggplot(reshape2::melt(cell_clust0),aes(x=Var2,y=Var1)) +
+  print(ggplot(reshape2::melt(cell_clusters),aes(x=Var2,y=Var1)) +
           geom_raster(aes(fill=as.factor(value))) + 
           scale_fill_manual(values=col_palette) + 
           xlab('Columns') + 
@@ -242,6 +255,7 @@ show_cell_clusters <- function(cell_clusters) {
   )
 }
 
+grDevices::dev.new()
 show_cell_clusters(cell_clust0)
 show_cell_clusters(cell_clust1)
 ```
@@ -250,13 +264,13 @@ show_cell_clusters(cell_clust1)
 
 ```{r}
 funcc_show_bicluster_dimension(array_3d_clr, biclust0)
-funcc_show_bicluster_dimension(array_3d_clr, biclust1)
+funcc_show_bicluster_dimension(array_3d, biclust1)
 ```
 
 ## Biclusters' H-score versus size
 
 ```{r}
-funcc_show_bicluster_hscore(array_3d_clr, biclust1)
+funcc_show_bicluster_hscore(array_3d, biclust1)
 funcc_show_bicluster_hscore(array_3d_clr, biclust0)
 ```
 
