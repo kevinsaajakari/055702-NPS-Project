@@ -10,7 +10,18 @@ Loading useful packages
 ```{r}
 library(tidyverse)
 library(ggplot2)
-library(compositions)
+```
+
+The centred log-ratio is defined by hand so that the transformation is
+transparent and has no hidden zero handling. It is identical to
+`compositions::clr()` for strictly positive compositions.
+
+```{r}
+clr <- function(x) {
+  stopifnot(all(x > 0))
+  lx <- log(x)
+  lx - mean(lx)
+}
 ```
 
 Loading raw data
@@ -246,21 +257,6 @@ data <- data %>% complete(
 )
 ```
 
-Checking normalisation
-
-```{r}
-data %>% group_by(station_id, day_cat) %>% summarise(tot = sum(percentage_entering)) %>% ggplot(data = ., aes(tot)) + geom_bar()
-```
-
-We renormalise it
-
-```{r}
-data_with_zeros <- data %>%
-  group_by(station_id, day_cat) %>%
-  mutate(percentage_entering = 100 * percentage_entering / sum(percentage_entering)) %>%
-  ungroup()
-```
-
 Checking zero values
 
 ```{r}
@@ -271,29 +267,55 @@ data %>% filter(percentage_entering == 0) %>% ggplot(data = ., aes(day_cat)) + g
 data %>% group_by(time_slot) %>% summarize(zero_freq = mean(percentage_entering  == 0)) %>% plot()
 ```
 
-There is no clear cut-off, we transform all zero values in near-zero values
+There is no clear cut-off, we transform all zero values in near-zero values.
+Shares are reported with two decimals, so a recorded 0 means a true share
+below 0.005%. We replace it with 0.01 and keep an explicit `imputed` flag, so
+that later steps know exactly which values are replacements (a genuine 0.01
+and an imputed one are otherwise indistinguishable).
 
 ```{r}
-data_no_zeros <- data %>% mutate(percentage_entering = ifelse(percentage_entering == 0, 0.01, percentage_entering))
+imputation_value <- 0.01
+
+data <- data %>% mutate(
+  imputed = percentage_entering == 0,
+  percentage_entering = ifelse(imputed, imputation_value, percentage_entering)
+)
+
+mean(data$imputed)
 ```
 
 We check normalization
 
 ```{r}
-data_no_zeros %>% group_by(station_id, day_cat) %>% summarise(tot = sum(percentage_entering)) %>% ggplot(aes(tot)) + geom_bar()
+data %>% group_by(station_id, day_cat) %>% summarise(tot = sum(percentage_entering)) %>% ggplot(data = ., aes(tot)) + geom_bar()
 ```
 
 ```{r}
-data_no_zeros %>% group_by(station_id, day_cat) %>% summarise(error = (sum(percentage_entering)-100)/0.01)
+data %>% group_by(station_id, day_cat) %>% summarise(error = (sum(percentage_entering)-100)/0.01)
 ```
 
-We renormalise it
+The totals differ from 100 because of rounding and of the zero replacement.
+We **close** each composition deterministically, $x \mapsto 100\,x/\sum_t x_t$.
+
+An earlier version corrected the rounding error by subtracting random
+multinomial draws of 0.01. That approach had two problems: it could push
+imputed 0.01 values back to exactly 0 (which makes the CLR infinite), and,
+without a seed, it changed the data on every knit. Closure avoids both. It
+keeps every value strictly positive, it is reproducible, and it does not
+change the CLR at all, because the CLR is scale invariant:
+$\mathrm{clr}(c\,x)=\mathrm{clr}(x)$.
 
 ```{r}
-data_no_zeros <- data_no_zeros %>%
+data <- data %>%
   group_by(station_id, day_cat) %>%
   mutate(percentage_entering = 100 * percentage_entering / sum(percentage_entering)) %>%
   ungroup()
+
+data %>%
+  group_by(station_id, day_cat) %>%
+  summarise(tot = sum(percentage_entering), .groups = "drop") %>%
+  summarise(max_abs_error = max(abs(tot - 100)),
+            min_share = min(data$percentage_entering))
 ```
 
 # Creating useful data containers
@@ -301,38 +323,90 @@ data_no_zeros <- data_no_zeros %>%
 3D array with rows as stations, columns as day types and cells (or depth) as the hourly distribution
 
 ```{r}
-array_3d <- data_with_zeros %>% select(
-  station_id, 
-  day_cat, 
-  time_slot,
-  percentage_entering
-) %>% pivot_wider(
-  names_from = day_cat, 
-  values_from = percentage_entering
-) %>% {split(.[setdiff(names(.), "time_slot")], .$time_slot)} %>% 
-  map(~ .x %>% 
-        column_to_rownames('station_id') %>% 
-        as.matrix) %>% 
-  simplify2array
+to_array_3d <- function(data, value_col) {
+  data %>% select(
+    station_id,
+    day_cat,
+    time_slot,
+    all_of(value_col)
+  ) %>% pivot_wider(
+    names_from = day_cat,
+    values_from = all_of(value_col)
+  ) %>% {split(.[setdiff(names(.), "time_slot")], .$time_slot)} %>%
+    map(~ .x %>%
+          column_to_rownames('station_id') %>%
+          as.matrix) %>%
+    simplify2array
+}
+
+array_3d <- to_array_3d(data, "percentage_entering")
+array_3d_imputed <- to_array_3d(data, "imputed")   # TRUE where a 0 was replaced
+
+stopifnot(identical(dimnames(array_3d), dimnames(array_3d_imputed)))
 ```
 
-3D array with Centred Log Ratio Transformation applied
+3D array with Centred Log Ratio Transformation applied (full day, 24 hours)
 
 ```{r}
-array_3d_no_zeros <- data_no_zeros %>% select(
-  station_id, 
-  day_cat, 
-  time_slot,
-  percentage_entering
-) %>% pivot_wider(
-  names_from = day_cat, 
-  values_from = percentage_entering
-) %>% {split(.[setdiff(names(.), "time_slot")], .$time_slot)} %>% 
-  map(~ .x %>% 
-        column_to_rownames('station_id') %>% 
-        as.matrix) %>% 
-  simplify2array
-array_3d_clr <- aperm(apply(array_3d_no_zeros, c(1, 2), clr), c(2, 3, 1))
+array_3d_clr <- aperm(apply(array_3d, c(1, 2), clr), c(2, 3, 1))
+dimnames(array_3d_clr) <- dimnames(array_3d)
+```
+
+## CLR on service hours
+
+At night most stations are closed, so most values between 1:00 and 4:59 are
+replacements. In CLR coordinates such a value becomes
+$\log(0.01)$ minus the log geometric mean, a large negative number fixed by
+the replacement constant rather than by the data. A depth or bicluster
+computed on the full day would then group stations mainly by *whether they
+close at night*.
+
+```{r}
+imputed_by_hour <- apply(array_3d_imputed, c(2, 3), mean)
+round(imputed_by_hour, 2)
+```
+
+We keep the hours in which, for **every** day type, at most 25% of the
+values are replacements. Because the CLR is not subcompositionally coherent,
+we re-close the subcomposition on those hours before taking the CLR. Simply
+dropping columns of the full-day CLR would be wrong.
+
+```{r}
+hours_all <- as.integer(dimnames(array_3d)[[3]])
+hours_service <- hours_all[apply(imputed_by_hour, 2, max) <= 0.25]
+hours_service
+
+array_3d_service <- array_3d[, , as.character(hours_service)]
+array_3d_service <- sweep(array_3d_service, c(1, 2),
+                          apply(array_3d_service, c(1, 2), sum), "/") * 100
+array_3d_clr_service <- aperm(apply(array_3d_service, c(1, 2), clr), c(2, 3, 1))
+dimnames(array_3d_clr_service) <- dimnames(array_3d_service)
+```
+
+## Integrity checks
+
+```{r}
+checks <- c(
+  all_shares_positive        = all(array_3d > 0),
+  full_day_sums_to_100       = max(abs(apply(array_3d, c(1, 2), sum) - 100)) < 1e-8,
+  full_day_clr_finite        = all(is.finite(array_3d_clr)),
+  full_day_clr_sums_to_0     = max(abs(apply(array_3d_clr, c(1, 2), sum))) < 1e-8,
+  service_sums_to_100        = max(abs(apply(array_3d_service, c(1, 2), sum) - 100)) < 1e-8,
+  service_clr_finite         = all(is.finite(array_3d_clr_service)),
+  service_clr_sums_to_0      = max(abs(apply(array_3d_clr_service, c(1, 2), sum))) < 1e-8,
+  # scale invariance: CLR of the un-closed service shares is the same
+  service_clr_scale_invariant = isTRUE(all.equal(
+    array_3d_clr_service,
+    {
+      raw <- array_3d[, , as.character(hours_service)]
+      out <- aperm(apply(raw, c(1, 2), clr), c(2, 3, 1))
+      dimnames(out) <- dimnames(raw)
+      out
+    }
+  ))
+)
+checks
+stopifnot(all(checks))
 ```
 
 Tibble with station information
@@ -350,8 +424,16 @@ stations <- data %>% select(
 ```{r}
 write.csv(data, "cleaned_data.csv", row.names = FALSE)
 write.csv(stations, "stations.csv", row.names = FALSE)
-save(array_3d, file = "array_3d.rda")
+save(array_3d, array_3d_imputed, file = "array_3d.rda")
 save(array_3d_clr, file = "array_3d_clr.rda")
+save(array_3d_clr_service, array_3d_service, hours_service,
+     file = "array_3d_clr_service.rda")
 ```
 
-To load data contained in `.rda` files, use for example `load("array_3d.rda")`. It will load `array_3d` in the environment.
+To load data contained in `.rda` files, use for example `load("array_3d.rda")`. It will load `array_3d` (and `array_3d_imputed`) in the environment.
+
+| File | Objects | Use |
+|---|---|---|
+| `array_3d.rda` | `array_3d`, `array_3d_imputed` | closed shares (%), 24 hours, and the replacement mask |
+| `array_3d_clr.rda` | `array_3d_clr` | CLR on the full day (sensitivity analyses only) |
+| `array_3d_clr_service.rda` | `array_3d_clr_service`, `array_3d_service`, `hours_service` | **CLR on service hours: use this for depth and biclustering** |
